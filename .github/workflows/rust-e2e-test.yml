@@ -1,19 +1,19 @@
-name: Rust CI & E2E Test Flow
+name: Build & E2E Integration Test
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  build-and-test:
     name: Build & E2E Integration Test
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,8 +23,6 @@ jobs:
 
       - name: Cache Cargo registry & build artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run Cargo Check across all targets
         run: cargo check --all-targets
