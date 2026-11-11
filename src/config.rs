@@ -1,6 +1,6 @@
 use std::env;
 
-pub const PONDOK_LOGO_URL: &str = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ9GEdwjS0LGmdqXny3Td834UU4FwxsV4DsvbxtRKx_Rh8mJd2IQv599LF5&s=10";
+pub const PONDOK_LOGO_URL: &str = "/static/pondok-logo.svg";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
