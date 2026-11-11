@@ -1,0 +1,24 @@
+[Unit]
+Description=SiPesantren Non-Financial Integrated Server
+After=network.target
+
+[Service]
+Type=simple
+User=sipesantren
+Group=sipesantren
+WorkingDirectory=/opt/sipesantren
+EnvironmentFile=/opt/sipesantren/.env
+ExecStart=/opt/sipesantren/sipesantren
+Restart=always
+RestartSec=3
+
+# Batas Hardening & Resource untuk VPS 2 Core / 4 GB RAM
+MemoryMax=512M
+CPUQuota=180%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/sipesantren/data
+
+[Install]
+WantedBy=network-online.target

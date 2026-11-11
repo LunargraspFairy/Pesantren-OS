@@ -1,0 +1,4905 @@
+================================================================
+SINGLE MASTER SPECIFICATION BUNDLE FOR GOOGLE AI STUDIO
+PROJECT: SIPESANTREN (RUST AXUM + SQLITE WAL + ASKAMA + HTMX)
+================================================================
+
+
+
+==================== START OF DOCUMENT: 00_MASTER_AGENTS.md ====================
+
+# 00 — Master Agent Guidelines, Architecture & Anti-Slop Manifesto (`00_MASTER_AGENTS.md`)
+
+Dokumen ini adalah **panduan induk (Root System Prompt / `.cursorrules` / `CLAUDE.md`)** untuk *AI Coding Agent*. Agen wajib membaca dan mematuhi dokumen ini pada setiap sesi (*cold start*) sebelum menulis satu baris kode pun di modul mana pun.
+
+## 1. Identitas Sistem & Batasan Lingkungan Server
+
+* **Nama Sistem**: **SiPesantren** (Sistem Informasi Akademik, Tahfidz, Kesantrian & Sambang Pondok Pesantren — **100% Non-Keuangan**).
+* **Cakupan 4 Pilar Utama**:
+  1. **Sambang, Titipan & Logbook Foto Pertemuan Privat** (Alur 6 tahap + Layar Panggilan Asrama SSE).
+  2. **Tracking Hafalan Al-Qur'an & Kitab/Mutun (`Tahfidz & Mutun`)** (Ziyadah, Muroja'ah, Tasmi', Mutun Kitab, Predikat Kelancaran, Progres Juz).
+  3. **Manajemen Ujian, Penilaian & Rapor Digital (`Imtihan & Rapor`)** (Semester, Mata Pelajaran Diniyah/Umum, Jadwal Ujian, Nilai Harian/UTS/UAS/Syafahi).
+  4. **Absensi, Perizinan & Pembinaan Kesantrian (`Kesantrian`)** (Kehadiran Harian, Izin Pulang/Sakit, Catatan Prestasi/Pembinaan Adab).
+* **Target Hardware Self-Hosting**: VPS / Mini PC Linux dengan spesifikasi **2 vCPU Core, 4 GB RAM, SSD Lokal**.
+* **Batas Penggunaan Memori (Memory Budget)**:
+  * Proses *binary* Rust saat *idle*: **< 40 MB RSS**.
+  * Proses *binary* Rust saat beban puncak (100 koneksi SSE aktif + input nilai kolektif + upload foto WebP): **< 160 MB RSS**.
+  * Cache halaman SQLite (`PRAGMA cache_size`): dibatasi **64 MB (`-64000`)** per koneksi di dalam *pool* (maksimal 5 koneksi = maks ~320 MB total) dan `PRAGMA journal_size_limit = 67108864` (64 MB batas atas ukuran file `.db-wal`).
+* **Prinsip Zero-Bloat**:
+  * Satu *binary* terkompilasi (`sipesantren`), satu database file (`./data/sipesantren.db`), satu direktori penyimpanan foto privat (`./data/private_photos/`), dan satu direktori aset statis (`./static/`).
+  * Dilarang menambahkan *runtime* eksternal seperti Redis, RabbitMQ, PostgreSQL, atau Node.js SSR di produksi.
+
+## 2. Manifesto Anti-Slop & Root-Cause Engineering Guardrails
+
+Setiap modul diwajibkan menerapkan disiplin **Anti-Slop** dan pencegahan *bug* level sistem berikut:
+
+### 2.1 Backend, Compiler & Database Guardrails
+1. **Zero Placeholder & Zero Stub**: Dilarang keras menulis `todo!()`, `unimplemented!()`, `// TODO`, atau mengembalikan JSON/HTML palsu di dalam *handler* produksi.
+2. **Zero `askama_axum` Version Conflict**: Dilarang menggunakan crate `askama_axum` (yang sering menyebabkan konflik versi `axum-core` pada `IntoResponse`). Gunakan `askama = "0.12.1"` murni yang dibungkus dengan `HtmlTemplate<T>(pub T)` di `src/error.rs`.
+3. **Zero Raw `Option<T>` Inside Askama Templates**: Di Askama `0.12`, tipe `Option<T>` **tidak** mengimplementasikan `std::fmt::Display`. Dilarang menulis `{{ item.optional_field }}` secara mentah di template HTML; wajib gunakan *helper method* (`.spot_display()`, `.schedule_window_display()`, `.notes_display()`) atau field berformat `String` (`harian_display`, dll.) yang sudah didefinisikan di `src/models.rs`.
+4. **Canonical Date & Time Parsing (Anti-Lexicographical Trap)**: Dilarang membandingkan string jam mentah tanpa normalisasi (karena `"9:00" > "10:00"` secara ASCII!). Semua input tanggal (`YYYY-MM-DD`) dan jam (`HH:MM`) wajib dinormalisasi menggunakan `validate_iso_date` dan `validate_hhmm_time` (`chrono::NaiveDate` & `chrono::NaiveTime`) di `src/models.rs` sebelum divalidasi atau disimpan ke SQLite.
+5. **SQLite WAL Write-First Transaction Ordering**: Di dalam transaksi `let mut tx = state.db.begin().await?;`, pernyataan pertama yang dieksekusi di atas `tx` **wajib berupa pernyataan tulis (`UPDATE` atau `INSERT`)**, bukan `SELECT`. Semua pembacaan pra-kondisi harus dilakukan sebelum `tx` dimulai agar SQLite langsung mengakuisisi *write lock* dengan menghormati `busy_timeout(10s)` dan bebas dari `SQLITE_BUSY_SNAPSHOT`.
+6. **DB-First Before Disk Write (Logbook Upload)**: Pada unggahan foto pertemuan di Modul 05, jalankan `UPDATE visit_requests` dan `INSERT INTO visit_logbooks` di dalam transaksi `tx` **sebelum** menulis file foto ke disk, dan hanya panggil `tx.commit().await?` setelah `tokio::fs::write` berhasil.
+
+### 2.2 Frontend & UI/UX Anti-Slop Rules (Detail di `03_MASTER_DESIGN_AND_ANTISLOP.md`)
+1. **Dilarang Memakai Visual AI Slop**:
+   * Dilarang menggunakan gradien ungu/indigo/neon (`from-purple-500 to-indigo-600`), efek *glassmorphism* berlebihan (`backdrop-blur-xl`), bayangan neon, atau *hero section* pemasaran kosong.
+   * Dilarang menaruh emoji dekoratif (`🚀`, `✨`, `🎉`, `🔥`, `📚`) di judul halaman, label tombol, atau *badge* status.
+2. **Wajib Menggunakan Identitas Visual Pesantren (`03_MASTER_DESIGN_AND_ANTISLOP.md`)**:
+   * Wajib menampilkan logo resmi pondok (`https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ9GEdwjS0LGmdqXny3Td834UU4FwxsV4DsvbxtRKx_Rh8mJd2IQv599LF5&s=10`) pada *topbar* navigasi, halaman login, layar TV asrama, dan kop Rapor Digital.
+   * Gunakan palet warna **Institutional Emerald & Warm Paper** (`#022C22` Emerald-950, `#065F46` Emerald-800, `#F8FAFC` Slate-50 permukaan, `#0F172A` Slate-900 teks utama, `#B45309` Amber-700 aksen perhatian/titipan).
+   * Semua kolom angka (Juz, Nomor Surah, Ayat, Nilai Ujian, Rata-rata Rapor, Jam Jadwal, Kode Tiket) wajib menggunakan kelas `font-mono tabular-nums`.
+
+## 3. Penguncian Tech Stack & Versi Crate (`Cargo.toml`)
+
+Agen wajib menggunakan daftar dependensi dan versi berikut di `Cargo.toml` (perhatikan `askama` digunakan tanpa `askama_axum` untuk menjamin kompatibilitas 100% dengan `axum 0.7.9`):
+
+```toml
+[package]
+name = "sipesantren"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+# Web Framework & Async Runtime
+axum = { version = "0.7.9", features = ["multipart", "macros"] }
+axum-extra = { version = "0.9.6", features = ["cookie", "typed-header"] }
+tokio = { version = "1.41.1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "signal"] }
+tokio-stream = { version = "0.1.16", features = ["sync"] }
+tower = { version = "0.5.1", features = ["util"] }
+tower-http = { version = "0.6.2", features = ["fs", "compression-br", "compression-gzip", "trace", "limit"] }
+futures-util = "0.3.31"
+async-trait = "0.1.83"
+
+# Database (SQLite + Compile/Runtime Checked Queries)
+sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono"] }
+
+# Templating (Server-Side Rendering via HtmlTemplate<T> wrapper)
+askama = "0.12.1"
+
+# Serialization, Time & Identifiers
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
+chrono = { version = "0.4.38", features = ["serde"] }
+uuid = { version = "1.11.0", features = ["v7", "serde"] }
+
+# Security & Cryptography
+argon2 = "0.5.3"
+password-hash = { version = "0.5.0", features = ["std", "getrandom"] }
+rand_core = { version = "0.6.4", features = ["std"] }
+sha2 = "0.10.8"
+hex = "0.4.3"
+
+# HTTP Client (Untuk Adapter WhatsApp Gateway)
+reqwest = { version = "0.12.9", default-features = false, features = ["json", "rustls-tls"] }
+
+# Logging & Error Handling
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+thiserror = "2.0.3"
+anyhow = "1.0.93"
+dotenvy = "0.15.7"
+```
+
+## 4. Peta Arsitektur Modular & Urutan Eksekusi Wajib (Compile-Safe Order)
+
+Agen wajib mengeksekusi pembangunan sistem mengikuti urutan **Langkah 1 hingga Langkah 9** di bawah ini:
+
+| Langkah | File Guideline Modul | Cakupan File Kode Rust / Aset | Prasyarat Kompilasi |
+| :--- | :--- | :--- | :--- |
+| **Langkah 1** | `MOD_01_CORE_DB_AND_INFRA.md` | `Cargo.toml`, `.env.example`, `migrations/0001_initial_schema.sql`, `src/config.rs`, `src/error.rs`, `src/models.rs`, `src/db.rs`, `src/seed.rs` | Master `00` s.d. `03` |
+| **Langkah 2** | `MOD_02_AUTH_AND_RBAC.md` | `src/auth.rs`, `src/routes/auth_routes.rs` | `MOD_01` |
+| **Langkah 3** | `MOD_04_SSE_AND_WA_GATEWAY.md` | `src/sse.rs`, `src/notification.rs`, `src/routes/sse_routes.rs` | `MOD_01`, `MOD_02` |
+| **Langkah 4** | `MOD_03_SAMBANG_STATE_ENGINE.md` | `src/services/visit_service.rs`, `src/routes/visit_api.rs` | `MOD_01`, `MOD_02`, `MOD_04` |
+| **Langkah 5** | `MOD_05_LOGBOOK_PRIVATE_PHOTO.md` | `src/services/logbook_service.rs`, `src/routes/logbook_routes.rs` | `MOD_01`, `MOD_02`, `MOD_03`, `MOD_04` |
+| **Langkah 6** | `MOD_06_TAHFIDZ_AND_KESANTRIAN.md` | `src/services/tahfidz_service.rs`, `src/services/kesantrian_service.rs`, `src/routes/tahfidz_api.rs`, `src/routes/kesantrian_api.rs` | `MOD_01`, `MOD_02`, `MOD_04` |
+| **Langkah 7** | `MOD_07_EXAMS_GRADES_AND_RAPOR.md` | `src/services/academic_service.rs`, `src/routes/academic_api.rs` | `MOD_01`, `MOD_02`, `MOD_04` |
+| **Langkah 8** | `MOD_08_FRONTEND_ANTISLOP_VIEWS.md` | `src/routes/views.rs`, `templates/**/*.html`, `static/js/photo-compressor.js`, `static/js/sse-client.js` | `MOD_01` s.d. `MOD_07` & `03_MASTER_DESIGN_AND_ANTISLOP.md` |
+| **Langkah 9** | `MOD_09_DEPLOY_AND_E2E_TEST.md` | `src/routes/mod.rs`, `src/services/mod.rs`, `src/lib.rs`, `src/main.rs`, `tests/e2e_flow.rs`, `Dockerfile`, `deploy/sipesantren.service`, `scripts/backup.sh` | `MOD_01` s.d. `MOD_08` |
+
+## 5. Kontrak AppState Global (`src/lib.rs` / `AppState`)
+
+```rust
+use std::{path::PathBuf, sync::Arc};
+use sqlx::SqlitePool;
+use crate::{config::AppConfig, notification::NotificationGateway, sse::SseBroadcaster};
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: SqlitePool,
+    pub config: Arc<AppConfig>,
+    pub sse: Arc<SseBroadcaster>,
+    pub notifier: Arc<dyn NotificationGateway>,
+    pub photo_base_dir: Arc<PathBuf>,
+}
+```
+
+
+==================== END OF DOCUMENT: 00_MASTER_AGENTS.md ====================
+
+
+
+==================== START OF DOCUMENT: 01_MASTER_PRD_AND_FLOWS.md ====================
+
+# 01 — Master Product Requirements Document & Workflows (`01_MASTER_PRD_AND_FLOWS.md`)
+
+Dokumen ini mendefinisikan kebutuhan produk secara menyeluruh untuk **SiPesantren**—platform terpadu **Non-Keuangan** yang mencakup manajemen kunjungan (**Sambang, Titipan & Logbook Foto**), pemantauan hafalan (**Tahfidz & Mutun**), ujian & penilaian akademik (**Imtihan & Rapor Digital**), serta absensi & pembinaan kesantrian (**Kesantrian**).
+
+## 1. Prinsip & Batasan Ruang Lingkup (Strict Non-Financial Scope)
+
+1. **100% Non-Keuangan**: Sistem ini berfokus murni pada kegiatan kepengasuhan, akademik, tahfidz, dan kunjungan keluarga. Sistem **tidak memuat** fitur tagihan SPP/syahriyah, dompet digital, tabungan santri, maupun pembayaran *payment gateway*.
+2. **Super Responsif di Server 2 Core / 4 GB RAM**: Seluruh fitur berjalan di atas satu *binary* Rust (`Axum` + `SQLite WAL` + `Askama SSR` + `HTMX`) tanpa *microservice* tambahan.
+3. **Transparansi Alur Sambang & Privasi Data Keluarga**:
+   * Pihak ketiga (`PUBLIC_VIEWER`) dapat melihat tahapan progres antrean sambang hari ini secara *real-time*, namun **tidak dapat melihat** foto pertemuan logbook, nomor telepon wali, rincian barang titipan, nilai ujian, maupun catatan hafalan santri.
+   * **Foto Pertemuan Logbook** (foto Wali Santri bersama Santri saat bertemu) serta **Rapor/Progres Hafalan/Catatan Kesantrian** dikunci ketat hanya untuk **Wali Santri terkait** dan petugas pondok yang berwenang.
+
+## 2. Definisi 5 Peran Aktor & Matriks Otorisasi (RBAC)
+
+Sistem membagi pengguna ke dalam **4 peran terautentikasi** (`WALI`, `ADMIN`, `MUSYRIF`, `ASATIDZ`) dan **1 peran peninjau alur publik** (`PUBLIC_VIEWER`):
+
+| Modul / Fitur Sistem | `WALI` (Wali Santri) | `ADMIN` (Petugas Pos & Akademik) | `MUSYRIF` (Pengurus Asrama) | `ASATIDZ` (Ustadz Pengajar/Penguji) | `PUBLIC_VIEWER` (Pihak Ketiga) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Sambang & Titipan**: Ajukan jadwal & konfirmasi hadir | **Diizinkan** (Anak sendiri) | Ditolak | Ditolak | Ditolak | Ditolak |
+| **Sambang & Titipan**: Tetapkan jadwal & panggil ke asrama | Ditolak | **Diizinkan** | Ditolak | Ditolak | Ditolak |
+| **Layar Panggilan Asrama**: Lihat panggilan & konfirmasi santri | Ditolak | **Diizinkan** (Semua asrama) | **Diizinkan** (Asrama tugasnya) | Ditolak | Ditolak |
+| **Logbook Pertemuan**: Unggah foto pertemuan Wali & Santri | Ditolak | **Diizinkan** | Ditolak | Ditolak | Ditolak |
+| **Logbook Pertemuan**: Lihat foto pertemuan (`image/webp`) | **Diizinkan** (Anak sendiri) | **Diizinkan** (Semua tiket) | **Ditolak (403)** | **Ditolak (403)** | **Ditolak (401/403)** |
+| **Papan Alur Sambang**: Pantau tahapan tiket *live* | **Diizinkan** | **Diizinkan** | **Diizinkan** | **Diizinkan** | **Diizinkan** (Tersensor privasi) |
+| **Tahfidz & Mutun**: Input setoran Ziyadah / Muroja'ah | Ditolak | **Diizinkan** | **Diizinkan** (Santri asramanya) | **Diizinkan** (Semua santri aktif) | Ditolak |
+| **Tahfidz & Mutun**: Lihat riwayat setoran & progres Juz | **Diizinkan** (Anak sendiri) | **Diizinkan** | **Diizinkan** (Santri asramanya) | **Diizinkan** | Ditolak |
+| **Ujian & Nilai**: Buat jadwal ujian & input nilai mapel | Ditolak | **Diizinkan** | Ditolak | **Diizinkan** | Ditolak |
+| **Rapor Digital**: Lihat rekap nilai ujian & rata-rata rapor | **Diizinkan** (Anak sendiri) | **Diizinkan** | **Diizinkan** (Santri asramanya) | **Diizinkan** | Ditolak |
+| **Kesantrian**: Input absensi harian, izin & catatan adab | Ditolak | **Diizinkan** | **Diizinkan** (Santri asramanya) | **Diizinkan** (Semua santri aktif) | Ditolak |
+| **Kesantrian**: Lihat rekap kehadiran, izin & catatan anak | **Diizinkan** (Anak sendiri) | **Diizinkan** | **Diizinkan** (Santri asramanya) | **Diizinkan** | Ditolak |
+
+## 3. Spesifikasi Alur Kerja 4 Pilar Utama
+
+### Pilar 1: Alur Sambang, Titipan & Logbook Pertemuan (State Machine 6 Tahap)
+
+```mermaid
+stateDiagram-v2
+    [*] --> REQUESTED : Wali ajukan sambang (+ status & daftar titipan)
+    REQUESTED --> SCHEDULED : Admin tetapkan jam & lokasi temu
+    REQUESTED --> CANCELLED : Wali / Admin batalkan
+    SCHEDULED --> CONFIRMED_BY_WALI : Wali konfirmasi hadir
+    SCHEDULED --> CANCELLED : Wali / Admin batalkan
+    CONFIRMED_BY_WALI --> SANTRI_CALLED : Admin panggil santri & kabari titipan ke layar Musyrif
+    CONFIRMED_BY_WALI --> CANCELLED : Admin batalkan
+    SANTRI_CALLED --> SANTRI_CONFIRMED : Musyrif konfirmasi santri & titipan->diteruskan ke Wali
+    SANTRI_CONFIRMED --> COMPLETED : Admin unggah Foto Pertemuan Wali & Santri ke Logbook
+    COMPLETED --> [*]
+    CANCELLED --> [*]
+```
+
+* **Aturan Kunci Pilar 1**:
+  1. Sambang dan Titipan selalu digabung dalam satu pengajuan (`has_titipan: 0 | 1` dan `titipan_description`).
+  2. Saat Admin menekan **Panggil Santri**, event SSE `dormitory_call` langsung tampil dan membunyikan *chime* di layar asrama Musyrif beserta badge apakah ada barang titipan.
+  3. Saat Musyrif menekan **Konfirmasi Santri & Titipan**, sistem menandai `santri_notified_by_musyrif = 1` dan `titipan_confirmed_to_wali = 1`, lalu mengabarkan ke Wali Santri.
+  4. Saat Wali Santri dan Santri bertemu (dan barang titipan diserahkan langsung), Admin memotret pertemuan mereka. Foto dikompres ke WebP di browser (`<= 1280px`) dan disimpan di `./data/private_photos/`.
+
+### Pilar 2: Alur Tracking Hafalan Al-Qur'an & Kitab (`Tahfidz & Mutun`)
+
+1. **Kategori Setoran (`log_type`)**:
+   * `ZIYADAH` (Tambahan hafalan baru Al-Qur'an).
+   * `MUROJAAH` (Pengulangan hafalan Al-Qur'an yang sudah dimiliki).
+   * `TASMI_JUZ` (Ujian sekali duduk 1 Juz penuh atau lebih).
+   * `MUTUN_KITAB` (Setoran hafalan matan kitab, misal *Aqidatul Awam*, *Jurumiyah*, *Imrithi*, *Alfiyah Ibn Malik*).
+2. **Parameter Pencatatan (`tahfidz_logs`)**:
+   * `juz_number` (`1..=30`), `surah_or_kitab` (nama Surah Al-Qur'an atau nama Kitab Matan), `ayah_or_bait_start`, dan `ayah_or_bait_end`.
+   * **Predikat Kelancaran (`predicate`) & Skor (`score_numeric`)**:
+     * `MUMTAZ` (Istimewa / Tanpa kesalahan, skor ekuivalen 90–100)
+     * `JAYYID_JIDDAN` (Sangat Baik, skor 80–89)
+     * `JAYYID` (Baik, skor 70–79)
+     * `MAQBUL` (Cukup / Lulus bersyarat, skor 60–69)
+     * `MENGULANG` (Belum lulus setoran, wajib diulang di pertemuan berikutnya)
+   * **Catatan Ustadz/Musyrif (`notes`)**: Catatan koreksi *tajwid*, *makharijul huruf*, atau kelancaran.
+3. **Pembaruan Progres Santri & Notifikasi**:
+   * Setiap setoran `ZIYADAH` atau `TASMI_JUZ` otomatis memperbarui `santri.current_surah_focus` (serta `santri.total_juz_memorized` bila parameter `update_total_juz` diisi) dan mencatat pesan ke `notification_outbox` (`event_type = "TAHFIDZ_RECORDED"`) untuk Wali Santri.
+
+### Pilar 3: Alur Manajemen Ujian, Nilai & Rapor Digital (`Imtihan & Rapor`)
+
+1. **Struktur Periode & Mata Pelajaran**:
+   * **Tahun Ajaran & Semester (`academic_terms`)**: Contoh `"2026/2027 Ganjil"`, memiliki status `is_active = 1` untuk semester berjalan.
+   * **Mata Pelajaran (`subjects`)**: Terbagi dalam kategori `DINIYAH`, `TAHFIDZ_QURAN`, dan `UMUM`. Setiap mapel memiliki `kkm_score` (Kriteria Ketuntasan Minimal, default `70`).
+2. **Penjadwalan Ujian (`exams`)**:
+   * `ADMIN` atau `ASATIDZ` menjadwalkan ujian per mapel pada semester aktif: memilih `exam_type` (`HARIAN`, `UTS`, `UAS`, `SYAFAHI_LISAN`), `class_level`, tanggal ujian (`exam_date`), dan judul ujian (`title`).
+3. **Input Nilai & Kalkulasi Rapor (`exam_grades`)**:
+   * `ASATIDZ` atau `ADMIN` menginput nilai angka (`score`: `0.0` s.d. `100.0`) yang dihitung otomatis huruf mutu (`letter_grade`) dan predikatnya (`predicate_label`) oleh fungsi `compute_grade_predicate(score)`:
+     * `90.0 ..= 100.0` -> `A` / `Mumtaz (Istimewa)`
+     * `80.0 ..< 90.0` -> `B` / `Jayyid Jiddan (Sangat Baik)`
+     * `70.0 ..< 80.0` -> `C` / `Jayyid (Baik)`
+     * `60.0 ..< 70.0` -> `D` / `Maqbul (Cukup)`
+     * `< 60.0` -> `E` / `Dhaif (Perlu Pembinaan)`
+   * Mencatat notifikasi `RAPOR_PUBLISHED` ke `notification_outbox` untuk Wali Santri.
+   * **Rapor Digital Santri**: Menampilkan tabel rekap seluruh mata pelajaran aktif lengkap dengan kolom `Harian`, `UTS`, `UAS`, `Syafahi`, `Nilai Akhir`, `Predikat`, dan `Status KKM` dalam format siap cetak (`window.print()`).
+
+### Pilar 4: Alur Absensi, Perizinan & Pembinaan Kesantrian (`Kesantrian`)
+
+1. **Absensi Harian (`attendance_logs`)**:
+   * Mencatat kehadiran santri per tanggal dan cakupan kegiatan (`SHOLAT_JAMAAH`, `KBM_DINIYAH`, `HALAQAH_TAHFIDZ`, `ASRAMA_MALAM`) dengan status: `HADIR`, `SAKIT`, `IZIN`, atau `ALFA`.
+2. **Catatan Kesantrian & Perizinan (`santri_notes`)**:
+   * Mencatat tiga jenis log non-keuangan oleh `MUSYRIF`, `ASATIDZ`, atau `ADMIN`:
+     * `PRESTASI`
+     * `PEMBINAAN_ADAB`
+     * `IZIN_KESEHATAN_PULANG`
+   * Wali Santri dapat memantau seluruh riwayat kehadiran dan catatan kesantrian anaknya secara transparan di tab **Kesantrian**.
+
+
+==================== END OF DOCUMENT: 01_MASTER_PRD_AND_FLOWS.md ====================
+
+
+
+==================== START OF DOCUMENT: 02_MASTER_ERD_AND_SCHEMA.md ====================
+
+# 02 — Master ERD, 15-Table SQLite Schema & Data Contracts (`02_MASTER_ERD_AND_SCHEMA.md`)
+
+Dokumen ini adalah **Single Source of Truth** untuk skema database SQLite (15 tabel), diagram relasi entitas (ERD), fungsi validasi tanggal/jam kanonis, dan definisi *struct* Rust (`src/models.rs`) beserta metode tampilan (`Display` helpers) yang aman untuk template Askama.
+
+## 1. Entity Relationship Diagram (Lengkap 15 Tabel Non-Keuangan)
+
+```mermaid
+erDiagram
+    DORMITORIES ||--o{ USERS : "musyrif bertugas"
+    DORMITORIES ||--o{ SANTRI : "dihuni santri"
+    USERS ||--o{ SANTRI : "wali utama (primary_wali_id)"
+    USERS ||--o{ SESSIONS : "sesi login aktif"
+
+    USERS ||--o{ VISIT_REQUESTS : "ajukan sambang (wali_id)"
+    SANTRI ||--o{ VISIT_REQUESTS : "dikunjungi (santri_id)"
+    VISIT_REQUESTS ||--o{ VISIT_STATUS_LOGS : "riwayat status"
+    VISIT_REQUESTS ||--o| VISIT_LOGBOOKS : "foto pertemuan privat"
+    VISIT_REQUESTS ||--o{ NOTIFICATION_OUTBOX : "log WA outbox"
+
+    SANTRI ||--o{ TAHFIDZ_LOGS : "setoran hafalan"
+    USERS ||--o{ TAHFIDZ_LOGS : "disimak ustadz/musyrif"
+
+    ACADEMIC_TERMS ||--o{ EXAMS : "periode ujian"
+    SUBJECTS ||--o{ EXAMS : "mata pelajaran diujikan"
+    EXAMS ||--o{ EXAM_GRADES : "memiliki daftar nilai"
+    SANTRI ||--o{ EXAM_GRADES : "memperoleh nilai"
+    USERS ||--o{ EXAM_GRADES : "diinput oleh"
+
+    SANTRI ||--o{ ATTENDANCE_LOGS : "absensi kegiatan"
+    SANTRI ||--o{ SANTRI_NOTES : "catatan prestasi/izin/adab"
+
+    DORMITORIES {
+        text id PK
+        text name UK
+        text gender_zone "PUTRA | PUTRI"
+        text building_location
+        text created_at
+    }
+
+    USERS {
+        text id PK
+        text full_name
+        text phone_number UK
+        text password_hash
+        text role "ADMIN | WALI | MUSYRIF | ASATIDZ"
+        text dormitory_id FK "Nullable"
+        integer is_active
+        text created_at
+    }
+
+    SESSIONS {
+        text token_hash PK "SHA-256 hex digest"
+        text user_id FK
+        text expires_at
+        text created_at
+    }
+
+    SANTRI {
+        text id PK
+        text nis UK
+        text full_name
+        text class_level
+        text dormitory_id FK
+        text room_name
+        text primary_wali_id FK
+        integer total_juz_memorized "0..30"
+        text current_surah_focus
+        integer is_active
+        text created_at
+    }
+
+    VISIT_REQUESTS {
+        text id PK
+        text ticket_code UK
+        text wali_id FK
+        text santri_id FK
+        text requested_date
+        text requested_session "PAGI | SIANG | SORE"
+        text scheduled_start
+        text scheduled_end
+        text meeting_spot
+        integer visitor_count
+        integer has_titipan "0 | 1"
+        text titipan_description
+        text current_status "REQUESTED..COMPLETED"
+        integer santri_notified_by_musyrif
+        integer titipan_confirmed_to_wali
+        text cancel_reason
+        text created_at
+        text updated_at
+    }
+
+    VISIT_STATUS_LOGS {
+        integer id PK
+        text visit_id FK
+        text from_status
+        text to_status
+        text actor_id FK
+        text public_note
+        text created_at
+    }
+
+    VISIT_LOGBOOKS {
+        text id PK
+        text visit_id FK, UK
+        text captured_by_admin_id FK
+        text photo_rel_path
+        integer photo_size_bytes
+        text photo_sha256
+        text meeting_notes
+        text meeting_timestamp
+    }
+
+    NOTIFICATION_OUTBOX {
+        integer id PK
+        text visit_id FK "Nullable"
+        text recipient_phone
+        text event_type
+        text message_body
+        text delivery_status "SKIPPED_DISABLED | PENDING | SENT | FAILED"
+        text error_message
+        text created_at
+        text sent_at
+    }
+
+    TAHFIDZ_LOGS {
+        text id PK
+        text santri_id FK
+        text evaluator_id FK
+        text session_date "YYYY-MM-DD"
+        text log_type "ZIYADAH | MUROJAAH | TASMI_JUZ | MUTUN_KITAB"
+        integer juz_number "1..30"
+        text surah_or_kitab "Nama Surah atau Kitab"
+        integer ayah_or_bait_start
+        integer ayah_or_bait_end
+        text predicate "MUMTAZ | JAYYID_JIDDAN | JAYYID | MAQBUL | MENGULANG"
+        integer score_numeric "0..100"
+        text notes
+        text created_at
+    }
+
+    ACADEMIC_TERMS {
+        text id PK
+        text term_name UK "Contoh: 2026/2027 Ganjil"
+        text academic_year
+        text semester_label "GANJIL | GENAP"
+        integer is_active "0 | 1"
+        text created_at
+    }
+
+    SUBJECTS {
+        text id PK
+        text code UK "Contoh: FIQ-01"
+        text name "Contoh: Fiqih Ibadah (Fathul Qarib)"
+        text category "DINIYAH | TAHFIDZ_QURAN | UMUM"
+        integer kkm_score "Default 70"
+        integer is_active
+        text created_at
+    }
+
+    EXAMS {
+        text id PK
+        text term_id FK
+        text subject_id FK
+        text exam_type "HARIAN | UTS | UAS | SYAFAHI_LISAN"
+        text class_level
+        text exam_date "YYYY-MM-DD"
+        text examiner_id FK
+        text title
+        text created_at
+    }
+
+    EXAM_GRADES {
+        text id PK
+        text exam_id FK
+        text santri_id FK
+        real score "0.0 .. 100.0"
+        text letter_grade "A | B | C | D | E"
+        text predicate_label "Mumtaz .. Dhaif"
+        text teacher_note
+        text recorded_by_id FK
+        text updated_at
+    }
+
+    ATTENDANCE_LOGS {
+        text id PK
+        text santri_id FK
+        text attendance_date "YYYY-MM-DD"
+        text activity_type "SHOLAT_JAMAAH | KBM_DINIYAH | HALAQAH_TAHFIDZ | ASRAMA_MALAM"
+        text status "HADIR | SAKIT | IZIN | ALFA"
+        text note
+        text recorded_by_id FK
+        text created_at
+    }
+
+    SANTRI_NOTES {
+        text id PK
+        text santri_id FK
+        text note_date "YYYY-MM-DD"
+        text category "PRESTASI | PEMBINAAN_ADAB | IZIN_KESEHATAN_PULANG"
+        text title
+        text description
+        text recorded_by_id FK
+        text created_at
+    }
+```
+
+## 2. DDL Migrasi SQLite Lengkap (`migrations/0001_initial_schema.sql`)
+
+Agen wajib menulis seluruh 15 tabel dan indeks berikut secara utuh ke dalam `migrations/0001_initial_schema.sql`:
+
+```sql
+-- ============================================================================
+-- BAGIAN A: ENTITAS INTI, PENGGUNA, SESI, ASRAMA & SANTRI (4 TABEL)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS dormitories (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    gender_zone TEXT NOT NULL CHECK (gender_zone IN ('PUTRA', 'PUTRI')),
+    building_location TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY NOT NULL,
+    full_name TEXT NOT NULL,
+    phone_number TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('ADMIN', 'WALI', 'MUSYRIF', 'ASATIDZ')),
+    dormitory_id TEXT REFERENCES dormitories(id) ON DELETE SET NULL,
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_dormitory ON users(dormitory_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS santri (
+    id TEXT PRIMARY KEY NOT NULL,
+    nis TEXT NOT NULL UNIQUE,
+    full_name TEXT NOT NULL,
+    class_level TEXT NOT NULL DEFAULT 'Kelas 1 Ula',
+    dormitory_id TEXT NOT NULL REFERENCES dormitories(id) ON DELETE RESTRICT,
+    room_name TEXT NOT NULL,
+    primary_wali_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    total_juz_memorized INTEGER NOT NULL DEFAULT 0 CHECK (total_juz_memorized >= 0 AND total_juz_memorized <= 30),
+    current_surah_focus TEXT NOT NULL DEFAULT 'Juz 30 (An-Naba)',
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_santri_wali ON santri(primary_wali_id);
+CREATE INDEX IF NOT EXISTS idx_santri_dormitory ON santri(dormitory_id);
+CREATE INDEX IF NOT EXISTS idx_santri_class ON santri(class_level);
+
+-- ============================================================================
+-- BAGIAN B: SAMBANG, TITIPAN, LOGBOOK FOTO PRIVAT & OUTBOX WA (4 TABEL)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS visit_requests (
+    id TEXT PRIMARY KEY NOT NULL,
+    ticket_code TEXT NOT NULL UNIQUE,
+    wali_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    santri_id TEXT NOT NULL REFERENCES santri(id) ON DELETE RESTRICT,
+    requested_date TEXT NOT NULL,
+    requested_session TEXT NOT NULL CHECK (requested_session IN ('PAGI', 'SIANG', 'SORE')),
+    scheduled_start TEXT,
+    scheduled_end TEXT,
+    meeting_spot TEXT,
+    visitor_count INTEGER NOT NULL DEFAULT 1 CHECK (visitor_count >= 1 AND visitor_count <= 10),
+    has_titipan INTEGER NOT NULL DEFAULT 0 CHECK (has_titipan IN (0, 1)),
+    titipan_description TEXT,
+    current_status TEXT NOT NULL DEFAULT 'REQUESTED' CHECK (
+        current_status IN (
+            'REQUESTED',
+            'SCHEDULED',
+            'CONFIRMED_BY_WALI',
+            'SANTRI_CALLED',
+            'SANTRI_CONFIRMED',
+            'COMPLETED',
+            'CANCELLED'
+        )
+    ),
+    santri_notified_by_musyrif INTEGER NOT NULL DEFAULT 0 CHECK (santri_notified_by_musyrif IN (0, 1)),
+    titipan_confirmed_to_wali INTEGER NOT NULL DEFAULT 0 CHECK (titipan_confirmed_to_wali IN (0, 1)),
+    cancel_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_visits_wali ON visit_requests(wali_id);
+CREATE INDEX IF NOT EXISTS idx_visits_santri ON visit_requests(santri_id);
+CREATE INDEX IF NOT EXISTS idx_visits_status_date ON visit_requests(current_status, requested_date);
+CREATE INDEX IF NOT EXISTS idx_visits_date ON visit_requests(requested_date);
+
+CREATE TABLE IF NOT EXISTS visit_status_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    visit_id TEXT NOT NULL REFERENCES visit_requests(id) ON DELETE CASCADE,
+    from_status TEXT,
+    to_status TEXT NOT NULL,
+    actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    public_note TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_status_logs_visit ON visit_status_logs(visit_id, id ASC);
+
+CREATE TABLE IF NOT EXISTS visit_logbooks (
+    id TEXT PRIMARY KEY NOT NULL,
+    visit_id TEXT NOT NULL UNIQUE REFERENCES visit_requests(id) ON DELETE CASCADE,
+    captured_by_admin_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    photo_rel_path TEXT NOT NULL,
+    photo_size_bytes INTEGER NOT NULL CHECK (photo_size_bytes > 0),
+    photo_sha256 TEXT NOT NULL,
+    meeting_notes TEXT,
+    meeting_timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    visit_id TEXT REFERENCES visit_requests(id) ON DELETE SET NULL,
+    recipient_phone TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    message_body TEXT NOT NULL,
+    delivery_status TEXT NOT NULL DEFAULT 'SKIPPED_DISABLED' CHECK (
+        delivery_status IN ('SKIPPED_DISABLED', 'PENDING', 'SENT', 'FAILED')
+    ),
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    sent_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_status ON notification_outbox(delivery_status);
+
+-- ============================================================================
+-- BAGIAN C: TRACKING HAFALAN AL-QUR'AN & KITAB/MUTUN (1 TABEL)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS tahfidz_logs (
+    id TEXT PRIMARY KEY NOT NULL,
+    santri_id TEXT NOT NULL REFERENCES santri(id) ON DELETE CASCADE,
+    evaluator_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    session_date TEXT NOT NULL,
+    log_type TEXT NOT NULL CHECK (log_type IN ('ZIYADAH', 'MUROJAAH', 'TASMI_JUZ', 'MUTUN_KITAB')),
+    juz_number INTEGER NOT NULL DEFAULT 30 CHECK (juz_number >= 1 AND juz_number <= 30),
+    surah_or_kitab TEXT NOT NULL,
+    ayah_or_bait_start INTEGER NOT NULL DEFAULT 1 CHECK (ayah_or_bait_start >= 1),
+    ayah_or_bait_end INTEGER NOT NULL DEFAULT 1 CHECK (ayah_or_bait_end >= ayah_or_bait_start),
+    predicate TEXT NOT NULL CHECK (
+        predicate IN ('MUMTAZ', 'JAYYID_JIDDAN', 'JAYYID', 'MAQBUL', 'MENGULANG')
+    ),
+    score_numeric INTEGER NOT NULL DEFAULT 85 CHECK (score_numeric >= 0 AND score_numeric <= 100),
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tahfidz_santri_date ON tahfidz_logs(santri_id, session_date DESC);
+
+-- ============================================================================
+-- BAGIAN D: UJIAN, PENILAIAN AKADEMIK & RAPOR DIGITAL (4 TABEL)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS academic_terms (
+    id TEXT PRIMARY KEY NOT NULL,
+    term_name TEXT NOT NULL UNIQUE,
+    academic_year TEXT NOT NULL,
+    semester_label TEXT NOT NULL CHECK (semester_label IN ('GANJIL', 'GENAP')),
+    is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Menjamin hanya ada maksimal 1 semester aktif pada satu waktu
+CREATE UNIQUE INDEX IF NOT EXISTS idx_single_active_term ON academic_terms(is_active) WHERE is_active = 1;
+
+CREATE TABLE IF NOT EXISTS subjects (
+    id TEXT PRIMARY KEY NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL CHECK (category IN ('DINIYAH', 'TAHFIDZ_QURAN', 'UMUM')),
+    kkm_score INTEGER NOT NULL DEFAULT 70 CHECK (kkm_score >= 0 AND kkm_score <= 100),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS exams (
+    id TEXT PRIMARY KEY NOT NULL,
+    term_id TEXT NOT NULL REFERENCES academic_terms(id) ON DELETE RESTRICT,
+    subject_id TEXT NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+    exam_type TEXT NOT NULL CHECK (exam_type IN ('HARIAN', 'UTS', 'UAS', 'SYAFAHI_LISAN')),
+    class_level TEXT NOT NULL,
+    exam_date TEXT NOT NULL,
+    examiner_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_exams_term_subject ON exams(term_id, subject_id);
+CREATE INDEX IF NOT EXISTS idx_exams_date ON exams(exam_date DESC);
+
+CREATE TABLE IF NOT EXISTS exam_grades (
+    id TEXT PRIMARY KEY NOT NULL,
+    exam_id TEXT NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+    santri_id TEXT NOT NULL REFERENCES santri(id) ON DELETE CASCADE,
+    score REAL NOT NULL CHECK (score >= 0.0 AND score <= 100.0),
+    letter_grade TEXT NOT NULL CHECK (letter_grade IN ('A', 'B', 'C', 'D', 'E')),
+    predicate_label TEXT NOT NULL,
+    teacher_note TEXT,
+    recorded_by_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(exam_id, santri_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_grades_santri ON exam_grades(santri_id);
+CREATE INDEX IF NOT EXISTS idx_grades_exam ON exam_grades(exam_id);
+
+-- ============================================================================
+-- BAGIAN E: ABSENSI HARIAN & CATATAN KESANTRIAN NON-KEUANGAN (2 TABEL)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS attendance_logs (
+    id TEXT PRIMARY KEY NOT NULL,
+    santri_id TEXT NOT NULL REFERENCES santri(id) ON DELETE CASCADE,
+    attendance_date TEXT NOT NULL,
+    activity_type TEXT NOT NULL CHECK (
+        activity_type IN ('SHOLAT_JAMAAH', 'KBM_DINIYAH', 'HALAQAH_TAHFIDZ', 'ASRAMA_MALAM')
+    ),
+    status TEXT NOT NULL CHECK (status IN ('HADIR', 'SAKIT', 'IZIN', 'ALFA')),
+    note TEXT,
+    recorded_by_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(santri_id, attendance_date, activity_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_santri_date ON attendance_logs(santri_id, attendance_date DESC);
+
+CREATE TABLE IF NOT EXISTS santri_notes (
+    id TEXT PRIMARY KEY NOT NULL,
+    santri_id TEXT NOT NULL REFERENCES santri(id) ON DELETE CASCADE,
+    note_date TEXT NOT NULL,
+    category TEXT NOT NULL CHECK (
+        category IN ('PRESTASI', 'PEMBINAAN_ADAB', 'IZIN_KESEHATAN_PULANG')
+    ),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    recorded_by_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_santri_notes_santri ON santri_notes(santri_id, note_date DESC);
+```
+
+## 3. Kontrak Struct Domain Rust & Askama-Safe Helpers (`src/models.rs`)
+
+Seluruh modul wajib memakai definisi *struct*, validator tanggal/jam, dan metode tampilan (`Display` helpers) di `src/models.rs` berikut ini agar bebas *compile error* pada `sqlx` maupun `askama`:
+
+```rust
+use chrono::{NaiveDate, NaiveTime};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+
+use crate::error::AppError;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UserRole {
+    Admin,
+    Wali,
+    Musyrif,
+    Asatidz,
+}
+
+impl UserRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Admin => "ADMIN",
+            Self::Wali => "WALI",
+            Self::Musyrif => "MUSYRIF",
+            Self::Asatidz => "ASATIDZ",
+        }
+    }
+
+    pub fn from_db(val: &str) -> Option<Self> {
+        match val {
+            "ADMIN" => Some(Self::Admin),
+            "WALI" => Some(Self::Wali),
+            "MUSYRIF" => Some(Self::Musyrif),
+            "ASATIDZ" => Some(Self::Asatidz),
+            _ => None,
+        }
+    }
+}
+
+/// Memvalidasi dan menormalisasi tanggal ke format kanonis YYYY-MM-DD
+pub fn validate_iso_date(raw: &str) -> Result<String, AppError> {
+    let d = NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
+        .map_err(|_| AppError::BadRequest(format!("Format tanggal '{}' tidak valid (wajib YYYY-MM-DD)", raw)))?;
+    Ok(d.format("%Y-%m-%d").to_string())
+}
+
+/// Memvalidasi dan menormalisasi jam ke format kanonis HH:MM (zero-padded, misal "9:00" -> "09:00")
+pub fn validate_hhmm_time(raw: &str) -> Result<String, AppError> {
+    let t = NaiveTime::parse_from_str(raw.trim(), "%H:%M")
+        .map_err(|_| AppError::BadRequest(format!("Format jam '{}' tidak valid (wajib HH:MM)", raw)))?;
+    Ok(t.format("%H:%M").to_string())
+}
+
+pub fn mask_santri_name(full_name: &str) -> String {
+    let parts: Vec<&str> = full_name.split_whitespace().collect();
+    match parts.as_slice() {
+        [] => "Santri".to_string(),
+        [single] => (*single).to_string(),
+        [first, second, ..] => {
+            let initial = second.chars().next().unwrap_or(' ');
+            format!("{} {}.", first, initial)
+        }
+    }
+}
+
+pub fn compute_grade_predicate(score: f64) -> (&'static str, &'static str) {
+    if score >= 90.0 {
+        ("A", "Mumtaz (Istimewa)")
+    } else if score >= 80.0 {
+        ("B", "Jayyid Jiddan (Sangat Baik)")
+    } else if score >= 70.0 {
+        ("C", "Jayyid (Baik)")
+    } else if score >= 60.0 {
+        ("D", "Maqbul (Cukup)")
+    } else {
+        ("E", "Dhaif (Perlu Pembinaan)")
+    }
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct User {
+    pub id: String,
+    pub full_name: String,
+    pub phone_number: String,
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    pub role: String,
+    pub dormitory_id: Option<String>,
+    pub is_active: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct Dormitory {
+    pub id: String,
+    pub name: String,
+    pub gender_zone: String,
+    pub building_location: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct Santri {
+    pub id: String,
+    pub nis: String,
+    pub full_name: String,
+    pub class_level: String,
+    pub dormitory_id: String,
+    pub room_name: String,
+    pub primary_wali_id: String,
+    pub total_juz_memorized: i64,
+    pub current_surah_focus: String,
+    pub is_active: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct VisitDetailView {
+    pub id: String,
+    pub ticket_code: String,
+    pub wali_id: String,
+    pub wali_name: String,
+    pub wali_phone: String,
+    pub santri_id: String,
+    pub santri_name: String,
+    pub santri_nis: String,
+    pub dormitory_id: String,
+    pub dormitory_name: String,
+    pub room_name: String,
+    pub requested_date: String,
+    pub requested_session: String,
+    pub scheduled_start: Option<String>,
+    pub scheduled_end: Option<String>,
+    pub meeting_spot: Option<String>,
+    pub visitor_count: i64,
+    pub has_titipan: i64,
+    pub titipan_description: Option<String>,
+    pub current_status: String,
+    pub santri_notified_by_musyrif: i64,
+    pub titipan_confirmed_to_wali: i64,
+    pub cancel_reason: Option<String>,
+    pub has_logbook: i64,
+    pub meeting_timestamp: Option<String>,
+    pub meeting_notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl VisitDetailView {
+    pub fn schedule_window_display(&self) -> String {
+        match (&self.scheduled_start, &self.scheduled_end) {
+            (Some(s), Some(e)) => format!("{} - {}", s, e),
+            _ => "Menunggu Penjadwalan".to_string(),
+        }
+    }
+
+    pub fn spot_display(&self) -> &str {
+        self.meeting_spot.as_deref().unwrap_or("Belum Ditentukan")
+    }
+
+    pub fn titipan_display(&self) -> &str {
+        if self.has_titipan == 1 {
+            self.titipan_description.as_deref().unwrap_or("Ada Titipan")
+        } else {
+            "Tanpa Titipan"
+        }
+    }
+
+    pub fn meeting_notes_display(&self) -> &str {
+        self.meeting_notes.as_deref().unwrap_or("-")
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicFlowItemView {
+    pub ticket_code: String,
+    pub santri_masked_name: String,
+    pub dormitory_name: String,
+    pub requested_date: String,
+    pub requested_session: String,
+    pub scheduled_window_display: String,
+    pub meeting_spot_display: String,
+    pub has_titipan: bool,
+    pub titipan_confirmed_to_wali: bool,
+    pub current_status: String,
+    pub has_private_logbook_photo: bool,
+    pub updated_at: String,
+}
+
+impl From<&VisitDetailView> for PublicFlowItemView {
+    fn from(v: &VisitDetailView) -> Self {
+        Self {
+            ticket_code: v.ticket_code.clone(),
+            santri_masked_name: mask_santri_name(&v.santri_name),
+            dormitory_name: v.dormitory_name.clone(),
+            requested_date: v.requested_date.clone(),
+            requested_session: v.requested_session.clone(),
+            scheduled_window_display: v.schedule_window_display(),
+            meeting_spot_display: v.spot_display().to_string(),
+            has_titipan: v.has_titipan == 1,
+            titipan_confirmed_to_wali: v.titipan_confirmed_to_wali == 1,
+            current_status: v.current_status.clone(),
+            has_private_logbook_photo: v.has_logbook == 1,
+            updated_at: v.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct VisitStatusLog {
+    pub id: i64,
+    pub visit_id: String,
+    pub from_status: Option<String>,
+    pub to_status: String,
+    pub actor_id: Option<String>,
+    pub public_note: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct TahfidzLogView {
+    pub id: String,
+    pub santri_id: String,
+    pub santri_name: String,
+    pub santri_nis: String,
+    pub evaluator_id: String,
+    pub evaluator_name: String,
+    pub session_date: String,
+    pub log_type: String,
+    pub juz_number: i64,
+    pub surah_or_kitab: String,
+    pub ayah_or_bait_start: i64,
+    pub ayah_or_bait_end: i64,
+    pub predicate: String,
+    pub score_numeric: i64,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+impl TahfidzLogView {
+    pub fn notes_display(&self) -> &str {
+        self.notes.as_deref().unwrap_or("-")
+    }
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct AcademicTerm {
+    pub id: String,
+    pub term_name: String,
+    pub academic_year: String,
+    pub semester_label: String,
+    pub is_active: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct Subject {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub category: String,
+    pub kkm_score: i64,
+    pub is_active: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ExamView {
+    pub id: String,
+    pub term_id: String,
+    pub term_name: String,
+    pub subject_id: String,
+    pub subject_code: String,
+    pub subject_name: String,
+    pub subject_category: String,
+    pub kkm_score: i64,
+    pub exam_type: String,
+    pub class_level: String,
+    pub exam_date: String,
+    pub examiner_id: String,
+    pub examiner_name: String,
+    pub title: String,
+    pub graded_count: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ExamGradeView {
+    pub id: String,
+    pub exam_id: String,
+    pub exam_title: String,
+    pub exam_type: String,
+    pub exam_date: String,
+    pub term_id: String,
+    pub term_name: String,
+    pub subject_id: String,
+    pub subject_code: String,
+    pub subject_name: String,
+    pub subject_category: String,
+    pub kkm_score: i64,
+    pub santri_id: String,
+    pub santri_name: String,
+    pub santri_nis: String,
+    pub score: f64,
+    pub letter_grade: String,
+    pub predicate_label: String,
+    pub teacher_note: Option<String>,
+    pub recorded_by_name: String,
+    pub updated_at: String,
+}
+
+impl ExamGradeView {
+    pub fn teacher_note_display(&self) -> &str {
+        self.teacher_note.as_deref().unwrap_or("-")
+    }
+}
+
+/// Baris agregasi per Mata Pelajaran untuk Rapor Digital Santri (Askama Display-safe)
+#[derive(Debug, Clone, Serialize)]
+pub struct RaporSubjectRow {
+    pub subject_code: String,
+    pub subject_name: String,
+    pub category: String,
+    pub kkm_score: i64,
+    pub harian_score: Option<f64>,
+    pub uts_score: Option<f64>,
+    pub uas_score: Option<f64>,
+    pub syafahi_score: Option<f64>,
+    pub harian_display: String,
+    pub uts_display: String,
+    pub uas_display: String,
+    pub syafahi_display: String,
+    pub final_score: f64,
+    pub final_display: String,
+    pub letter_grade: String,
+    pub predicate_label: String,
+    pub passed_kkm: bool,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct AttendanceLogView {
+    pub id: String,
+    pub santri_id: String,
+    pub santri_name: String,
+    pub attendance_date: String,
+    pub activity_type: String,
+    pub status: String,
+    pub note: Option<String>,
+    pub recorded_by_name: String,
+    pub created_at: String,
+}
+
+impl AttendanceLogView {
+    pub fn note_display(&self) -> &str {
+        self.note.as_deref().unwrap_or("-")
+    }
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct SantriNoteView {
+    pub id: String,
+    pub santri_id: String,
+    pub santri_name: String,
+    pub note_date: String,
+    pub category: String,
+    pub title: String,
+    pub description: String,
+    pub recorded_by_name: String,
+    pub created_at: String,
+}
+```
+
+
+==================== END OF DOCUMENT: 02_MASTER_ERD_AND_SCHEMA.md ====================
+
+
+
+==================== START OF DOCUMENT: 03_MASTER_DESIGN_AND_ANTISLOP.md ====================
+
+# 03 — Master Design System, Brand Logo & Anti-Slop UI Guidelines (`03_MASTER_DESIGN_AND_ANTISLOP.md`)
+
+Dokumen ini (`DESIGN.md`) adalah panduan wajib bagi *AI Coding Agent* saat membangun seluruh template HTML (`Askama`), komponen `HTMX`, dan *state* `Alpine.js` pada Modul 08 (`MOD_08_FRONTEND_ANTISLOP_VIEWS.md`).
+
+## 1. Aset Identitas Visual & Logo Resmi Pondok Pesantren
+
+Seluruh halaman wajib menggunakan URL logo resmi pondok pesantren berikut tanpa modifikasi atau substitusi:
+
+* **Official Logo URL**:
+  `https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ9GEdwjS0LGmdqXny3Td834UU4FwxsV4DsvbxtRKx_Rh8mJd2IQv599LF5&s=10`
+* **Konstanta Rust di `src/config.rs` / Template**:
+  Simpan URL tersebut sebagai konstanta `pub const PONDOK_LOGO_URL: &str = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ9GEdwjS0LGmdqXny3Td834UU4FwxsV4DsvbxtRKx_Rh8mJd2IQv599LF5&s=10";`.
+* **Aturan Penempatan Logo**:
+  1. **Topbar Navigasi (`templates/layout.html`)**: Tampilkan `<img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ9GEdwjS0LGmdqXny3Td834UU4FwxsV4DsvbxtRKx_Rh8mJd2IQv599LF5&s=10" alt="Logo Pondok Pesantren" class="h-10 w-10 rounded-md object-contain bg-white p-0.5 border border-emerald-800/30" />` di sebelah kiri nama aplikasi **SiPesantren**.
+  2. **Halaman Login (`templates/login.html`)**: Tampilkan logo ukuran `h-16 w-16` di bagian atas kartu masuk bersama identitas institusi.
+  3. **Layar Monitor Asrama (`templates/musyrif_board.html`)**: Tampilkan logo `h-12 w-12` di bilah informasi atas layar TV asrama.
+  4. **Kop Rapor Digital (`templates/wali_dashboard.html` & mode cetak `@media print`)**: Tampilkan logo resmi di sebelah kiri kop surat penilaian semester dan tahfidz.
+
+## 2. Filosofi Desain: High-Density Institutional Utilitarian (Zero AI Slop)
+
+Aplikasi ini digunakan setiap hari oleh Wali Santri (di layar HP dengan sinyal beragam), Ustadz/Asatidz (saat menyimak setoran hafalan puluhan santri secara berurutan), Musyrif (di layar monitor asrama), dan Admin Pos. Oleh karena itu, antarmuka wajib mematuhi aturan **Anti-Slop** berikut:
+
+### 2.1 Daftar Larangan Keras (UI/UX Anti-Slop Ban List)
+1. **Dilarang Menggunakan Palet SaaS AI Generik**: Jangan pernah menggunakan kelas Tailwind `bg-indigo-*`, `bg-purple-*`, `bg-violet-*`, atau gradien mencolok seperti `bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500`.
+2. **Dilarang Menaruh Emoji di Komponen Antarmuka**: Dilarang menulis teks tombol atau judul seperti `"📅 Ajukan Sambang"`, `"📖 Setoran Hafalan"`, `"🎓 Nilai Ujian"`, atau `"✅ Berhasil"`. Gunakan teks bahasa Indonesia yang bersih, lugas, dan berwibawa, dipadukan dengan *badge* warna semantik atau ikon SVG garis (`stroke-width="1.75"`).
+3. **Dilarang Membuat Kartu Kosong Ber-Padding Raksasa**: Hindari `p-10`, `rounded-3xl`, `shadow-2xl`, atau `backdrop-blur-lg` yang membuang ruang layar HP dan membebani GPU perangkat spesifikasi rendah. Gunakan `rounded-lg` (`8px`), border tegas `border-slate-200`, dan padding proporsional (`p-4` atau `p-5`).
+4. **Dilarang Menyembunyikan Aksi Utama di Balik Banyak Klik**: Pada Workspace Asatidz dan Dashboard Admin, formulir input setoran hafalan, input nilai ujian, dan penjadwalan sambang harus langsung terlihat dan bisa diisi dengan *keyboard navigation* (`Tab` -> `Enter`) tanpa *modal* berlapis-lapis.
+
+### 2.2 Sistem Palet Warna Semantik (Tailwind CSS Tokens)
+
+| Peran Elemen | Kelas Tailwind Wajib | Kode Hex | Penggunaan Spesifik |
+| :--- | :--- | :--- | :--- |
+| **Header & Brand Utama** | `bg-emerald-950 text-white` | `#022C22` | Topbar navigasi utama & header layar monitor asrama. |
+| **Tombol Aksi Primer** | `bg-emerald-800 hover:bg-emerald-900 text-white` | `#065F46` | Tombol simpan setoran hafalan, ajukan sambang, simpan nilai, konfirmasi hadir. |
+| **Latar Belakang Aplikasi** | `bg-slate-50 text-slate-900` | `#F8FAFC` | Latar belakang utama halaman yang ramah mata untuk penggunaan lama. |
+| **Permukaan Kartu & Tabel** | `bg-white border border-slate-200` | `#FFFFFF` | Kontainer tabel, kartu jadwal sambang, dan lembar rapor digital. |
+| **Aksen Perhatian / Titipan** | `bg-amber-50 text-amber-900 border-amber-300` | `#FFFBEB` / `#78350F` | Indikator **"ADA TITIPAN BARANG"** di layar Musyrif & status menunggu konfirmasi. |
+| **Status Lulus / Mumtaz / Selesai** | `bg-emerald-50 text-emerald-800 border-emerald-200` | `#ECFDF5` / `#065F46` | Predikat hafalan `MUMTAZ` / `JAYYID JIDDAN`, nilai di atas KKM, status `COMPLETED`. |
+| **Status Mengulang / Batal / Alfa** | `bg-red-50 text-red-800 border-red-200` | `#FEF2F2` / `#991B1B` | Predikat hafalan `MENGULANG`, nilai di bawah KKM, absensi `ALFA`, tiket `CANCELLED`. |
+
+### 2.3 Tipografi & Keterbacaan Data Kuantitatif
+* **Font Utama**: Sistem sans-serif bersih (`font-sans`: Inter / system-ui) dengan kontras minimal WCAG AAA pada teks isi (`text-slate-900` untuk primer, `text-slate-600` untuk sekunder).
+* **Angka & Kode Wajib Monospace Tabular**:
+  Semua elemen berikut **wajib** diberi kelas `font-mono tabular-nums`:
+  * Kode tiket sambang (`SMB-20261109-XXXX`)
+  * Jam jadwal (`09:00 - 09:45`)
+  * Nomor Induk Santri (`2026001`)
+  * Cakupan Juz dan Ayat (`Juz 30 • QS. An-Naba': 1–40`)
+  * Nilai angka ujian dan rata-rata rapor (`88.5`, `KKM: 70`)
+
+## 3. Arsitektur Tata Letak per Peran Pengguna
+
+### 3.1 Portal Wali Santri (`templates/wali_dashboard.html`) — Mobile-First 4-Tab Workspace
+Menggunakan *state* ringan Alpine.js (`x-data="{ activeTab: 'sambang', selectedSantri: '...' }"`) sehingga Wali Santri dapat berpindah antar-4 pilar secara instan tanpa *reload* halaman penuh:
+1. **Ringkasan Profil Santri (Sticky Summary Bar)**: Menampilkan nama santri, NIS, kelas, asrama/kamar, badge **Total Hafalan: `X Juz`**, fokus surah saat ini, dan persentase kehadiran.
+2. **Tab 1 — `Sambang & Logbook`**:
+   * Form pengajuan sambang + toggle titipan barang.
+   * Kartu jadwal aktif (tombol konfirmasi hadir + banner konfirmasi santri & titipan dari Musyrif).
+   * Galeri **Logbook Foto Pertemuan** (menampilkan foto pertemuan Wali & Santri dari endpoint privat `/api/visits/:id/logbook/photo`).
+3. **Tab 2 — `Tahfidz & Mutun`**:
+   * Visualisasi progres hafalan 30 Juz (*progress bar* proporsional `total_juz_memorized / 30`).
+   * Tabel riwayat setoran (`ZIYADAH`, `MUROJAAH`, `TASMI_JUZ`, `MUTUN_KITAB`) lengkap dengan tanggal, surah/kitab, ayat/bait, predikat, skor, nama penyimak, dan catatan koreksi tajwid.
+4. **Tab 3 — `Ujian & Rapor Digital`**:
+   * Tabel **Rapor Digital Semester Aktif** yang mengelompokkan mata pelajaran (`DINIYAH`, `TAHFIDZ_QURAN`, `UMUM`) beserta kolom nilai `Harian`, `UTS`, `UAS`, `Syafahi`, `Nilai Akhir`, `Predikat`, dan `Status KKM`.
+   * Tombol **`Cetak Rapor (PDF/Print)`** yang memicu `window.print()` dengan stylesheet `@media print` bersih berlogo resmi pondok.
+5. **Tab 4 — `Kesantrian & Kehadiran`**:
+   * Ringkasan jumlah `HADIR`, `SAKIT`, `IZIN`, `ALFA`.
+   * Daftar catatan pembinaan adab, prestasi, dan riwayat izin kesehatan/pulang.
+
+### 3.2 Workspace Asatidz & Akademik (`templates/asatidz_dashboard.html`) — High-Speed Batch Entry
+Dirancang untuk efisiensi input Ustadz di kelas atau halaqah:
+1. **Panel Kiri / Tab 1 — Input Cepat Setoran Tahfidz & Mutun**: Form satu baris/kompak untuk memilih santri, jenis setoran, Juz, Surah/Kitab, ayat awal–akhir, predikat (`MUMTAZ` s.d. `MENGULANG`), skor, dan catatan tajwid.
+2. **Panel Tengah / Tab 2 — Manajemen Jadwal Ujian & Input Nilai**: Form buat sesi ujian baru (`HARIAN`, `UTS`, `UAS`, `SYAFAHI_LISAN`) dan form input nilai santri dengan kalkulasi huruf predikat otomatis di sisi server.
+3. **Panel Kanan / Tab 3 — Input Absensi & Catatan Kesantrian**: Form pencatatan kehadiran kegiatan dan log prestasi/pembinaan adab.
+
+### 3.3 Layar Monitor Panggilan Asrama (`templates/musyrif_board.html`) — High-Contrast TV View
+Dirancang agar terbaca dari jarak 5–10 meter di ruang pengurus asrama:
+* Header gelap (`bg-emerald-950`) dengan logo pondok, nama asrama aktif, dan indikator status koneksi *Live SSE*.
+* Grid kartu panggilan berformat besar untuk status `SANTRI_CALLED` dengan warna pembeda mencolok apabila **ADA TITIPAN BARANG**, disertai tombol satu-klik **`Konfirmasi Santri & Titipan Sudah Dikabari`**.
+* Menyediakan tombol akses cepat ke form pencatatan absensi malam & catatan kesantrian asrama.
+
+
+==================== END OF DOCUMENT: 03_MASTER_DESIGN_AND_ANTISLOP.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_01_CORE_DB_AND_INFRA.md ====================
+
+# Modul 01 — Core Infrastructure, 15-Table SQLite WAL Tuning & Seeder (`MOD_01_CORE_DB_AND_INFRA.md`)
+
+Modul ini membangun fondasi server Rust **SiPesantren**, konfigurasi lingkungan (termasuk konstanta URL logo resmi pondok), pembungkus `HtmlTemplate<T>` untuk Askama, optimasi koneksi SQLite untuk spesifikasi **2 Core / 4 GB RAM**, serta *seeder* deterministik lintas 4 pilar non-keuangan.
+
+## 1. Scope & File Ownership
+
+* `Cargo.toml` (sesuai `00_MASTER_AGENTS.md`)
+* `.env.example`
+* `migrations/0001_initial_schema.sql` (15 tabel sesuai `02_MASTER_ERD_AND_SCHEMA.md`)
+* `src/config.rs`
+* `src/error.rs`
+* `src/models.rs` (sesuai `02_MASTER_ERD_AND_SCHEMA.md`)
+* `src/db.rs`
+* `src/seed.rs`
+
+## 2. Aturan Anti-Slop Khusus Modul 01
+
+1. **Zero Hardcoded Secret / Magic Numbers**: Seluruh parameter port, direktori, dan batas ukuran file wajib dibaca melalui `AppConfig::from_env()` dengan nilai *fallback* yang aman.
+2. **Strict SQLite WAL & Bounded WAL File Size**: Aktifkan `journal_mode(SqliteJournalMode::Wal)`, `foreign_keys(true)`, `busy_timeout(10s)`, `pragma("cache_size", "-64000")`, dan `pragma("journal_size_limit", "67108864")` (64 MB batas atas ukuran file `.db-wal`).
+3. **Native `HtmlTemplate<T>` Wrapper (Tanpa `askama_axum`)**: Sediakan struct `HtmlTemplate<T>(pub T)` di `src/error.rs` yang mengimplementasikan `axum::response::IntoResponse` langsung di atas `askama::Template` sehingga bebas konflik versi `axum-core`.
+
+## 3. Konfigurasi Lingkungan (`.env.example` & `src/config.rs`)
+
+### File `.env.example`
+```ini
+HOST=0.0.0.0
+PORT=3000
+DATABASE_URL=sqlite://./data/sipesantren.db?mode=rwc
+PHOTO_STORAGE_DIR=./data/private_photos
+MAX_PHOTO_UPLOAD_BYTES=2097152
+SESSION_TTL_HOURS=168
+SEED_ON_STARTUP=true
+
+# Konfigurasi WhatsApp Gateway (Default: false / Disiapkan tanpa perlu di-setting sekarang)
+WA_GATEWAY_ENABLED=false
+WA_GATEWAY_URL=http://localhost:3001/api/sendText
+WA_GATEWAY_API_KEY=
+```
+
+### Implementasi `src/config.rs`
+```rust
+use std::env;
+
+pub const PONDOK_LOGO_URL: &str = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ9GEdwjS0LGmdqXny3Td834UU4FwxsV4DsvbxtRKx_Rh8mJd2IQv599LF5&s=10";
+
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    pub host: String,
+    pub port: u16,
+    pub database_url: String,
+    pub photo_storage_dir: String,
+    pub max_photo_upload_bytes: usize,
+    pub session_ttl_hours: i64,
+    pub seed_on_startup: bool,
+    pub wa_gateway_enabled: bool,
+    pub wa_gateway_url: String,
+    pub wa_gateway_api_key: String,
+}
+
+impl AppConfig {
+    pub fn from_env() -> Self {
+        let _ = dotenvy::dotenv();
+        Self {
+            host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
+            port: env::var("PORT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3000),
+            database_url: env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "sqlite://./data/sipesantren.db?mode=rwc".to_string()),
+            photo_storage_dir: env::var("PHOTO_STORAGE_DIR")
+                .unwrap_or_else(|_| "./data/private_photos".to_string()),
+            max_photo_upload_bytes: env::var("MAX_PHOTO_UPLOAD_BYTES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2 * 1024 * 1024),
+            session_ttl_hours: env::var("SESSION_TTL_HOURS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(168),
+            seed_on_startup: env::var("SEED_ON_STARTUP")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(true),
+            wa_gateway_enabled: env::var("WA_GATEWAY_ENABLED")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false),
+            wa_gateway_url: env::var("WA_GATEWAY_URL").unwrap_or_default(),
+            wa_gateway_api_key: env::var("WA_GATEWAY_API_KEY").unwrap_or_default(),
+        }
+    }
+}
+```
+
+## 4. Penanganan Error Terpusat & Wrapper `HtmlTemplate<T>` (`src/error.rs`)
+
+```rust
+use askama::Template;
+use axum::{
+    http::StatusCode,
+    response::{Html, IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+
+#[derive(Debug, thiserror::Error)]
+pub enum AppError {
+    #[error("Autentikasi diperlukan: silakan login terlebih dahulu")]
+    Unauthorized,
+
+    #[error("Akses ditolak: Anda tidak memiliki izin untuk sumber daya ini")]
+    Forbidden,
+
+    #[error("Data tidak ditemukan: {0}")]
+    NotFound(String),
+
+    #[error("Input atau status tidak valid: {0}")]
+    BadRequest(String),
+
+    #[error("Konflik data atau status jadwal: {0}")]
+    Conflict(String),
+
+    #[error("Kesalahan database internal")]
+    Database(#[from] sqlx::Error),
+
+    #[error("Kesalahan sistem internal")]
+    Internal(#[from] anyhow::Error),
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let status = match &self {
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Database(e) => {
+                tracing::error!("SQLx database error: {:?}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            Self::Internal(e) => {
+                tracing::error!("Internal error: {:?}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
+
+        let message = self.to_string();
+        let body = Json(json!({
+            "error": true,
+            "message": message
+        }));
+
+        (status, body).into_response()
+    }
+}
+
+/// Pembungkus template Askama ke Axum Response tanpa ketergantungan askama_axum
+pub struct HtmlTemplate<T>(pub T);
+
+impl<T> IntoResponse for HtmlTemplate<T>
+where
+    T: Template,
+{
+    fn into_response(self) -> Response {
+        match self.0.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(err) => {
+                tracing::error!("Askama template render error: {:?}", err);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Kesalahan saat merender tampilan halaman",
+                )
+                    .into_response()
+            }
+        }
+    }
+}
+```
+
+## 5. Inisialisasi & Tuning SQLite untuk 2 Core / 4 GB RAM (`src/db.rs`)
+
+```rust
+use std::{str::FromStr, time::Duration};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+    SqlitePool,
+};
+
+pub async fn init_db_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
+    tokio::fs::create_dir_all("./data").await?;
+
+    let connect_options = SqliteConnectOptions::from_str(database_url)?
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(10))
+        .foreign_keys(true)
+        .pragma("cache_size", "-64000")
+        .pragma("journal_size_limit", "67108864")
+        .pragma("temp_store", "MEMORY");
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .min_connections(1)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(connect_options)
+        .await?;
+
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    Ok(pool)
+}
+```
+
+## 6. Spesifikasi Seeder Deterministik (`src/seed.rs`)
+
+Saat `SEED_ON_STARTUP=true` dan tabel `users` kosong (`SELECT COUNT(*) FROM users` == 0), fungsi `seed_initial_data(db: &SqlitePool)` wajib membuat data awal berikut dengan ID tetap di dalam satu transaksi (`let mut tx = db.begin().await?;`):
+
+### 6.1 Asrama & Pengguna (6 Akun untuk 4 Peran)
+
+| Entitas | ID (`id`) | Nama & Detail | Nomor HP & Password Login |
+| :--- | :--- | :--- | :--- |
+| **Asrama Putra** | `dorm-putra-01` | `"Asrama Putra Al-Farabi"` (`PUTRA`, `"Gedung Timur Lt. 1"`) | - |
+| **Asrama Putri** | `dorm-putri-01` | `"Asrama Putri Khadijah"` (`PUTRI`, `"Gedung Barat Lt. 2"`) | - |
+| **Admin Pos & Akademik** | `user-admin-01` | `"Ustadz Hendra (Admin Pondok)"`, Role `ADMIN` | `08110000001` / `admin123` |
+| **Musyrif Putra** | `user-musyrif-01` | `"Ustadz Zaki (Musyrif Putra)"`, Role `MUSYRIF`, Dorm `dorm-putra-01` | `08110000002` / `musyrif123` |
+| **Musyrif Putri** | `user-musyrif-02` | `"Ustadzah Aisyah (Musyrif Putri)"`, Role `MUSYRIF`, Dorm `dorm-putri-01` | `08110000003` / `musyrif123` |
+| **Ustadz Pengajar/Penguji** | `user-asatidz-01` | `"KH. Manshur Al-Hafidz (Asatidz)"`, Role `ASATIDZ` | `08110000004` / `ustadz123` |
+| **Wali Santri 1** | `user-wali-01` | `"Bapak Fauzi"`, Role `WALI` | `081234567801` / `wali123` |
+| **Wali Santri 2** | `user-wali-02` | `"Ibu Rahma"`, Role `WALI` | `081234567802` / `wali123` |
+
+### 6.2 Santri, Periode Akademik & Mata Pelajaran
+
+* **Santri**:
+  * `santri-01`: NIS `"2026001"`, Nama `"Ahmad Zaidan"`, Kelas `"Kelas 2 Wustha"`, Asrama `dorm-putra-01`, Kamar `"Kamar 04"`, Wali `user-wali-01`, `total_juz_memorized = 5`, `current_surah_focus = "Juz 6 (QS. Al-Maidah)"`.
+  * `santri-02`: NIS `"2026002"`, Nama `"Nabila Azzahra"`, Kelas `"Kelas 1 Wustha"`, Asrama `dorm-putri-01`, Kamar `"Kamar 02"`, Wali `user-wali-02`, `total_juz_memorized = 8`, `current_surah_focus = "Juz 9 (QS. Al-A'raf)"`.
+* **Periode Semester Aktif (`academic_terms`)**:
+  * `term-2026-ganjil`: `term_name = "2026/2027 Ganjil"`, `academic_year = "2026/2027"`, `semester_label = "GANJIL"`, `is_active = 1`.
+* **Mata Pelajaran (`subjects`)**:
+  * `subj-fiqih`: Kode `"FIQ-01"`, Nama `"Fiqih Ibadah (Fathul Qarib)"`, Kategori `"DINIYAH"`, `kkm_score = 70`.
+  * `subj-nahwu`: Kode `"NHW-01"`, Nama `"Nahwu & Shorof (Jurumiyah)"`, Kategori `"DINIYAH"`, `kkm_score = 70`.
+  * `subj-tahfidz`: Kode `"THF-01"`, Nama `"Tahfidz & Tajwid Al-Qur'an"`, Kategori `"TAHFIDZ_QURAN"`, `kkm_score = 75`.
+  * `subj-arab`: Kode `"ARB-01"`, Nama `"Bahasa Arab & Muhadatsah"`, Kategori `"UMUM"`, `kkm_score = 70`.
+* **Sampel Awal Tahfidz, Ujian, Nilai & Kesantrian**:
+  * Tambahkan 2 baris `tahfidz_logs` untuk `santri-01` (`ZIYADAH` QS. Al-Maidah 1–15 predikat `MUMTAZ`, dan `MUTUN_KITAB` Nadzom Imrithi bait 1–25 predikat `JAYYID_JIDDAN`).
+  * Tambahkan 2 sesi `exams` pada `term-2026-ganjil` (`exam-fiqih-uts` dan `exam-tahfidz-syafahi`) beserta nilai awal di `exam_grades` untuk `santri-01`.
+  * Tambahkan 1 baris `attendance_logs` (`HADIR`) dan 1 baris `santri_notes` (`PRESTASI`) untuk `santri-01`.
+
+## 7. Checklist Verifikasi Modul 01
+
+* [ ] Seluruh 15 tabel berhasil dibuat oleh `sqlx::migrate!("./migrations")` dengan mode WAL dan `journal_size_limit` 64 MB aktif.
+* [ ] Wrapper `HtmlTemplate<T>` tersedia di `src/error.rs` dan mengimplementasikan `IntoResponse`.
+* [ ] Seeder berjalan secara transaksional dan membuat 6 akun pengguna, 2 santri, 1 semester aktif, dan 4 mata pelajaran.
+
+
+==================== END OF DOCUMENT: MOD_01_CORE_DB_AND_INFRA.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_02_AUTH_AND_RBAC.md ====================
+
+# Modul 02 — Authentication, Session Pruning & 4-Role RBAC Guards (`MOD_02_AUTH_AND_RBAC.md`)
+
+Modul ini menangani autentikasi berbasis Cookie (`HttpOnly`), pembersihan otomatis sesi kedaluwarsa (*automatic expired session pruning*), pembuatan hash kata sandi dengan `Argon2id`, ekstraktor pengguna aktif (`CurrentUser`) di Axum, serta fungsi *guard* otorisasi untuk 4 peran terautentikasi (`ADMIN`, `WALI`, `MUSYRIF`, `ASATIDZ`).
+
+## 1. Scope & File Ownership
+
+* `src/auth.rs`
+* `src/routes/auth_routes.rs`
+
+## 2. Aturan Anti-Slop Khusus Modul 02
+
+1. **Zero Plaintext Session Token in DB**: Cookie `sisambang_session` menyimpan *raw token* 64-hex di browser, sedangkan tabel `sessions` di SQLite wajib hanya menyimpan **SHA-256 hex digest** (`token_hash`).
+2. **Automatic Expired Session Pruning**: Setiap kali `create_user_session` dipanggil, jalankan `DELETE FROM sessions WHERE expires_at <= ?1` terlebih dahulu (memanfaatkan indeks `idx_sessions_expires`) agar tabel `sessions` tidak pernah membengkak oleh baris kedaluwarsa.
+3. **Explicit Role & Ownership Helpers**: Gunakan metode bertipe kuat pada `CurrentUser` (`require_role`, `require_admin_or_asatidz`, `require_staff_for_dorm`, `require_admin_or_musyrif_for_dorm`).
+
+## 3. Implementasi Lengkap `src/auth.rs`
+
+```rust
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use axum::{
+    async_trait,
+    extract::FromRequestParts,
+    http::request::Parts,
+};
+use axum_extra::extract::CookieJar;
+use chrono::{Duration, Utc};
+use rand_core::RngCore;
+use sha2::{Digest, Sha256};
+
+use crate::{
+    error::AppError,
+    models::{User, UserRole},
+    AppState,
+};
+
+pub const SESSION_COOKIE_NAME: &str = "sisambang_session";
+
+pub fn hash_password(plain: &str) -> Result<String, AppError> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    argon2
+        .hash_password(plain.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Password hash error: {}", e)))
+}
+
+pub fn verify_password(plain: &str, hash: &str) -> bool {
+    let Ok(parsed_hash) = PasswordHash::new(hash) else {
+        return false;
+    };
+    Argon2::default()
+        .verify_password(plain.as_bytes(), &parsed_hash)
+        .is_ok()
+}
+
+pub fn generate_session_token() -> (String, String) {
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    let raw_token = hex::encode(bytes);
+    let token_hash = hash_session_token(&raw_token);
+    (raw_token, token_hash)
+}
+
+pub fn hash_session_token(raw_token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw_token.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+#[derive(Debug, Clone)]
+pub struct CurrentUser {
+    pub id: String,
+    pub full_name: String,
+    pub phone_number: String,
+    pub role: UserRole,
+    pub dormitory_id: Option<String>,
+}
+
+impl CurrentUser {
+    pub fn require_role(&self, expected: UserRole) -> Result<(), AppError> {
+        if self.role == expected {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden)
+        }
+    }
+
+    pub fn require_admin_or_asatidz(&self) -> Result<(), AppError> {
+        match self.role {
+            UserRole::Admin | UserRole::Asatidz => Ok(()),
+            _ => Err(AppError::Forbidden),
+        }
+    }
+
+    pub fn require_staff_for_dorm(&self, target_dorm_id: &str) -> Result<(), AppError> {
+        match self.role {
+            UserRole::Admin | UserRole::Asatidz => Ok(()),
+            UserRole::Musyrif => {
+                if self.dormitory_id.as_deref() == Some(target_dorm_id) {
+                    Ok(())
+                } else {
+                    Err(AppError::Forbidden)
+                }
+            }
+            UserRole::Wali => Err(AppError::Forbidden),
+        }
+    }
+
+    pub fn require_admin_or_musyrif_for_dorm(&self, target_dorm_id: &str) -> Result<(), AppError> {
+        match self.role {
+            UserRole::Admin => Ok(()),
+            UserRole::Musyrif => {
+                if self.dormitory_id.as_deref() == Some(target_dorm_id) {
+                    Ok(())
+                } else {
+                    Err(AppError::Forbidden)
+                }
+            }
+            _ => Err(AppError::Forbidden),
+        }
+    }
+
+    pub fn home_redirect_path(&self) -> &'static str {
+        match self.role {
+            UserRole::Admin => "/admin",
+            UserRole::Wali => "/wali",
+            UserRole::Musyrif => "/musyrif/board",
+            UserRole::Asatidz => "/asatidz",
+        }
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for CurrentUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let jar = CookieJar::from_headers(&parts.headers);
+        let Some(cookie) = jar.get(SESSION_COOKIE_NAME) else {
+            return Err(AppError::Unauthorized);
+        };
+
+        let token_hash = hash_session_token(cookie.value());
+        let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        let user: Option<User> = sqlx::query_as::<_, User>(
+            "SELECT u.id, u.full_name, u.phone_number, u.password_hash, u.role, u.dormitory_id, u.is_active, u.created_at
+             FROM sessions s
+             JOIN users u ON u.id = s.user_id
+             WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND u.is_active = 1"
+        )
+        .bind(&token_hash)
+        .bind(&now_iso)
+        .fetch_optional(&state.db)
+        .await?;
+
+        let user = user.ok_or(AppError::Unauthorized)?;
+        let role = UserRole::from_db(&user.role).ok_or(AppError::Unauthorized)?;
+
+        Ok(CurrentUser {
+            id: user.id,
+            full_name: user.full_name,
+            phone_number: user.phone_number,
+            role,
+            dormitory_id: user.dormitory_id,
+        })
+    }
+}
+
+pub async fn create_user_session(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+    ttl_hours: i64,
+) -> Result<String, AppError> {
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let _ = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?1")
+        .bind(&now_iso)
+        .execute(db)
+        .await;
+
+    let (raw_token, token_hash) = generate_session_token();
+    let expires_at = (Utc::now() + Duration::hours(ttl_hours))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+
+    sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?1, ?2, ?3)")
+        .bind(&token_hash)
+        .bind(user_id)
+        .bind(&expires_at)
+        .execute(db)
+        .await?;
+
+    Ok(raw_token)
+}
+```
+
+## 4. Implementasi Lengkap Endpoint Login & Logout (`src/routes/auth_routes.rs`)
+
+```rust
+use axum::{
+    extract::{Form, State},
+    response::Redirect,
+};
+use axum_extra::extract::{
+    cookie::{Cookie, SameSite},
+    CookieJar,
+};
+use serde::Deserialize;
+
+use crate::{
+    auth::{
+        create_user_session, hash_session_token, verify_password, SESSION_COOKIE_NAME,
+    },
+    error::AppError,
+    models::{User, UserRole},
+    AppState,
+};
+
+#[derive(Debug, Deserialize)]
+pub struct LoginForm {
+    pub phone_number: String,
+    pub password: String,
+}
+
+pub async fn handle_login(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Form(form): Form<LoginForm>,
+) -> Result<(CookieJar, Redirect), AppError> {
+    let phone = form.phone_number.trim();
+    let user: Option<User> = sqlx::query_as::<_, User>(
+        "SELECT id, full_name, phone_number, password_hash, role, dormitory_id, is_active, created_at
+         FROM users
+         WHERE phone_number = ?1 AND is_active = 1"
+    )
+    .bind(phone)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(user) = user else {
+        return Err(AppError::Unauthorized);
+    };
+
+    if !verify_password(&form.password, &user.password_hash) {
+        return Err(AppError::Unauthorized);
+    }
+
+    let raw_token = create_user_session(&state.db, &user.id, state.config.session_ttl_hours).await?;
+
+    let cookie = Cookie::build((SESSION_COOKIE_NAME, raw_token))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .max_age(axum_extra::extract::cookie::time::Duration::hours(
+            state.config.session_ttl_hours,
+        ))
+        .build();
+
+    let dest = match UserRole::from_db(&user.role) {
+        Some(UserRole::Admin) => "/admin",
+        Some(UserRole::Wali) => "/wali",
+        Some(UserRole::Musyrif) => "/musyrif/board",
+        Some(UserRole::Asatidz) => "/asatidz",
+        None => "/alur",
+    };
+
+    Ok((jar.add(cookie), Redirect::to(dest)))
+}
+
+pub async fn handle_logout(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<(CookieJar, Redirect), AppError> {
+    if let Some(cookie) = jar.get(SESSION_COOKIE_NAME) {
+        let token_hash = hash_session_token(cookie.value());
+        let _ = sqlx::query("DELETE FROM sessions WHERE token_hash = ?1")
+            .bind(&token_hash)
+            .execute(&state.db)
+            .await;
+    }
+
+    let removal = Cookie::build((SESSION_COOKIE_NAME, ""))
+        .path("/")
+        .http_only(true)
+        .max_age(axum_extra::extract::cookie::time::Duration::ZERO)
+        .build();
+
+    Ok((jar.remove(removal), Redirect::to("/login")))
+}
+```
+
+## 5. Checklist Verifikasi Modul 02
+
+* [ ] `create_user_session` membersihkan baris `sessions` yang sudah kedaluwarsa sebelum menyimpan sesi baru.
+* [ ] Login akun `ASATIDZ` (`08110000004` / `ustadz123`) mengarahkan ke `/asatidz`.
+* [ ] Seluruh metode *guard* (`require_admin_or_asatidz`, `require_staff_for_dorm`, `require_admin_or_musyrif_for_dorm`) terverifikasi.
+
+
+==================== END OF DOCUMENT: MOD_02_AUTH_AND_RBAC.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_03_SAMBANG_STATE_ENGINE.md ====================
+
+# Modul 03 — Sambang & Titipan State Machine Engine (`MOD_03_SAMBANG_STATE_ENGINE.md`)
+
+Modul ini mengimplementasikan kode lengkap layanan transaksi kunjungan tatap muka (**Sambang**) dan informasi barang bawaan (**Titipan**) dari status `REQUESTED` hingga `SANTRI_CONFIRMED` serta `CANCELLED`. (Transisi akhir ke `COMPLETED` ditangani bersama unggahan foto pertemuan di Modul 05).
+
+## 1. Scope & File Ownership
+
+* `src/services/visit_service.rs`
+* `src/routes/visit_api.rs`
+
+## 2. Aturan Anti-Slop & Root-Cause Guardrails Modul 03
+
+1. **Canonical Time & Date Normalization**: Seluruh input `requested_date` wajib dinormalisasi dengan `validate_iso_date`, serta `scheduled_start` dan `scheduled_end` wajib dinormalisasi dengan `validate_hhmm_time` (`"9:00"` -> `"09:00"`) sebelum dibandingkan agar tidak terkena jebakan perbandingan string ASCII (`"9:00" > "10:00"`).
+2. **Write-First Transaction Ordering**: Di dalam `let mut tx = state.db.begin().await?;`, pernyataan pertama yang dijalankan wajib berupa `INSERT` atau `UPDATE` (bukan `SELECT`), sehingga SQLite langsung mengakuisisi *write lock* dengan menghormati `busy_timeout(10s)` dan bebas dari `SQLITE_BUSY_SNAPSHOT`.
+3. **Post-Commit Side Effects**: Pemanggilan `state.sse` dan `state.notifier` hanya dilakukan setelah `tx.commit().await?` berhasil.
+
+## 3. Implementasi Lengkap `src/services/visit_service.rs`
+
+```rust
+use chrono::Utc;
+use serde::Deserialize;
+use sqlx::SqlitePool;
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    models::{validate_hhmm_time, validate_iso_date, UserRole, VisitDetailView},
+    AppState,
+};
+
+pub const SELECT_VISIT_DETAIL_SQL: &str = r#"
+SELECT
+    v.id,
+    v.ticket_code,
+    v.wali_id,
+    u.full_name AS wali_name,
+    u.phone_number AS wali_phone,
+    v.santri_id,
+    s.full_name AS santri_name,
+    s.nis AS santri_nis,
+    s.dormitory_id,
+    d.name AS dormitory_name,
+    s.room_name,
+    v.requested_date,
+    v.requested_session,
+    v.scheduled_start,
+    v.scheduled_end,
+    v.meeting_spot,
+    v.visitor_count,
+    v.has_titipan,
+    v.titipan_description,
+    v.current_status,
+    v.santri_notified_by_musyrif,
+    v.titipan_confirmed_to_wali,
+    v.cancel_reason,
+    CASE WHEN l.id IS NOT NULL THEN 1 ELSE 0 END AS has_logbook,
+    l.meeting_timestamp,
+    l.meeting_notes,
+    v.created_at,
+    v.updated_at
+FROM visit_requests v
+JOIN users u ON u.id = v.wali_id
+JOIN santri s ON s.id = v.santri_id
+JOIN dormitories d ON d.id = s.dormitory_id
+LEFT JOIN visit_logbooks l ON l.visit_id = v.id
+"#;
+
+pub fn deserialize_checkbox_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrString {
+        Bool(bool),
+        Str(String),
+        Int(i64),
+    }
+
+    match Option::<BoolOrString>::deserialize(deserializer)? {
+        Some(BoolOrString::Bool(b)) => Ok(b),
+        Some(BoolOrString::Int(i)) => Ok(i != 0),
+        Some(BoolOrString::Str(s)) => {
+            let v = s.trim().to_ascii_lowercase();
+            Ok(v == "true" || v == "1" || v == "on" || v == "yes")
+        }
+        None => Ok(false),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateVisitInput {
+    pub santri_id: String,
+    pub requested_date: String,
+    pub requested_session: String,
+    pub visitor_count: i64,
+    #[serde(default, deserialize_with = "deserialize_checkbox_bool")]
+    pub has_titipan: bool,
+    pub titipan_description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScheduleVisitInput {
+    pub scheduled_start: String,
+    pub scheduled_end: String,
+    pub meeting_spot: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelVisitInput {
+    pub cancel_reason: String,
+}
+
+pub async fn fetch_visit_detail(
+    db: &SqlitePool,
+    visit_id: &str,
+) -> Result<VisitDetailView, AppError> {
+    let sql = format!("{} WHERE v.id = ?1", SELECT_VISIT_DETAIL_SQL);
+    sqlx::query_as::<_, VisitDetailView>(&sql)
+        .bind(visit_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Tiket {} tidak ditemukan", visit_id)))
+}
+
+pub async fn create_visit_request(
+    state: &AppState,
+    user: &CurrentUser,
+    input: CreateVisitInput,
+) -> Result<VisitDetailView, AppError> {
+    user.require_role(UserRole::Wali)?;
+
+    let req_date = validate_iso_date(&input.requested_date)?;
+    if !matches!(input.requested_session.as_str(), "PAGI" | "SIANG" | "SORE") {
+        return Err(AppError::BadRequest("Sesi kunjungan harus PAGI, SIANG, atau SORE".into()));
+    }
+    if !(1..=10).contains(&input.visitor_count) {
+        return Err(AppError::BadRequest("Jumlah pengunjung harus antara 1 sampai 10 orang".into()));
+    }
+
+    let cleaned_titipan = if input.has_titipan {
+        let desc = input
+            .titipan_description
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("");
+        if desc.is_empty() || desc.len() > 500 {
+            return Err(AppError::BadRequest(
+                "Deskripsi barang titipan wajib diisi (maks 500 karakter)".into(),
+            ));
+        }
+        Some(desc.to_string())
+    } else {
+        None
+    };
+
+    let owns_santri: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM santri WHERE id = ?1 AND primary_wali_id = ?2 AND is_active = 1"
+    )
+    .bind(&input.santri_id)
+    .bind(&user.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if owns_santri == 0 {
+        return Err(AppError::Forbidden);
+    }
+
+    let active_dup: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM visit_requests
+         WHERE santri_id = ?1 AND requested_date = ?2
+         AND current_status NOT IN ('CANCELLED', 'COMPLETED')"
+    )
+    .bind(&input.santri_id)
+    .bind(&req_date)
+    .fetch_one(&state.db)
+    .await?;
+
+    if active_dup > 0 {
+        return Err(AppError::Conflict(
+            "Santri sudah memiliki jadwal sambang aktif pada tanggal tersebut".into(),
+        ));
+    }
+
+    let id = uuid::Uuid::now_v7().to_string();
+    let suffix = id[id.len().saturating_sub(4)..].to_uppercase();
+    let ticket_code = format!("SMB-{}-{}", req_date.replace('-', ""), suffix);
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let mut tx = state.db.begin().await?;
+
+    sqlx::query(
+        "INSERT INTO visit_requests (
+            id, ticket_code, wali_id, santri_id, requested_date, requested_session,
+            visitor_count, has_titipan, titipan_description, current_status, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'REQUESTED', ?10, ?10)"
+    )
+    .bind(&id)
+    .bind(&ticket_code)
+    .bind(&user.id)
+    .bind(&input.santri_id)
+    .bind(&req_date)
+    .bind(&input.requested_session)
+    .bind(input.visitor_count)
+    .bind(if input.has_titipan { 1 } else { 0 })
+    .bind(&cleaned_titipan)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO visit_status_logs (visit_id, from_status, to_status, actor_id, public_note, created_at)
+         VALUES (?1, NULL, 'REQUESTED', ?2, 'Pengajuan sambang dibuat oleh Wali Santri', ?3)"
+    )
+    .bind(&id)
+    .bind(&user.id)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let detail = fetch_visit_detail(&state.db, &id).await?;
+    state.sse.emit_public_flow_event(&detail);
+    Ok(detail)
+}
+
+pub async fn schedule_visit(
+    state: &AppState,
+    user: &CurrentUser,
+    visit_id: &str,
+    input: ScheduleVisitInput,
+) -> Result<VisitDetailView, AppError> {
+    user.require_role(UserRole::Admin)?;
+
+    let start_hhmm = validate_hhmm_time(&input.scheduled_start)?;
+    let end_hhmm = validate_hhmm_time(&input.scheduled_end)?;
+    if start_hhmm >= end_hhmm {
+        return Err(AppError::BadRequest(
+            "Jam selesai harus lebih besar dari jam mulai".into(),
+        ));
+    }
+
+    let spot = input.meeting_spot.trim();
+    if spot.is_empty() {
+        return Err(AppError::BadRequest("Lokasi ruang/gazebo temu wajib diisi".into()));
+    }
+
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let note = format!("Jadwal ditetapkan pukul {}-{} di {}", start_hhmm, end_hhmm, spot);
+
+    let mut tx = state.db.begin().await?;
+
+    let res = sqlx::query(
+        "UPDATE visit_requests
+         SET scheduled_start = ?1, scheduled_end = ?2, meeting_spot = ?3,
+             current_status = 'SCHEDULED', updated_at = ?4
+         WHERE id = ?5 AND current_status = 'REQUESTED'"
+    )
+    .bind(&start_hhmm)
+    .bind(&end_hhmm)
+    .bind(spot)
+    .bind(&now_iso)
+    .bind(visit_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(AppError::Conflict("Tiket tidak dalam status REQUESTED".into()));
+    }
+
+    sqlx::query(
+        "INSERT INTO visit_status_logs (visit_id, from_status, to_status, actor_id, public_note, created_at)
+         VALUES (?1, 'REQUESTED', 'SCHEDULED', ?2, ?3, ?4)"
+    )
+    .bind(visit_id)
+    .bind(&user.id)
+    .bind(&note)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let detail = fetch_visit_detail(&state.db, visit_id).await?;
+    let wa_msg = format!(
+        "Jadwal sambang untuk {} ({}) telah ditetapkan pada {} pukul {}-{} di {}. Silakan konfirmasi kehadiran di aplikasi SiPesantren.",
+        detail.santri_name, detail.ticket_code, detail.requested_date, start_hhmm, end_hhmm, spot
+    );
+    state
+        .notifier
+        .notify_wali(Some(&detail.id), &detail.wali_phone, "SCHEDULE_SET", &wa_msg)
+        .await;
+    state.sse.emit_public_flow_event(&detail);
+
+    Ok(detail)
+}
+
+pub async fn confirm_schedule_by_wali(
+    state: &AppState,
+    user: &CurrentUser,
+    visit_id: &str,
+) -> Result<VisitDetailView, AppError> {
+    user.require_role(UserRole::Wali)?;
+
+    let pre_detail = fetch_visit_detail(&state.db, visit_id).await?;
+    if pre_detail.wali_id != user.id {
+        return Err(AppError::Forbidden);
+    }
+
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let mut tx = state.db.begin().await?;
+
+    let res = sqlx::query(
+        "UPDATE visit_requests
+         SET current_status = 'CONFIRMED_BY_WALI', updated_at = ?1
+         WHERE id = ?2 AND wali_id = ?3 AND current_status = 'SCHEDULED'"
+    )
+    .bind(&now_iso)
+    .bind(visit_id)
+    .bind(&user.id)
+    .execute(&mut *tx)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(AppError::Conflict("Tiket harus berstatus SCHEDULED untuk dikonfirmasi".into()));
+    }
+
+    sqlx::query(
+        "INSERT INTO visit_status_logs (visit_id, from_status, to_status, actor_id, public_note, created_at)
+         VALUES (?1, 'SCHEDULED', 'CONFIRMED_BY_WALI', ?2, 'Wali Santri mengonfirmasi kehadiran sesuai jadwal', ?3)"
+    )
+    .bind(visit_id)
+    .bind(&user.id)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let detail = fetch_visit_detail(&state.db, visit_id).await?;
+    state.sse.emit_public_flow_event(&detail);
+    Ok(detail)
+}
+
+pub async fn call_santri_to_dormitory(
+    state: &AppState,
+    user: &CurrentUser,
+    visit_id: &str,
+) -> Result<VisitDetailView, AppError> {
+    user.require_role(UserRole::Admin)?;
+
+    let pre_detail = fetch_visit_detail(&state.db, visit_id).await?;
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let note = if pre_detail.has_titipan == 1 {
+        "Admin memanggil santri ke asrama beserta informasi ada barang titipan"
+    } else {
+        "Admin memanggil santri ke asrama (tanpa barang titipan)"
+    };
+
+    let mut tx = state.db.begin().await?;
+
+    let res = sqlx::query(
+        "UPDATE visit_requests
+         SET current_status = 'SANTRI_CALLED', updated_at = ?1
+         WHERE id = ?2 AND current_status = 'CONFIRMED_BY_WALI'"
+    )
+    .bind(&now_iso)
+    .bind(visit_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(AppError::Conflict(
+            "Tiket harus berstatus CONFIRMED_BY_WALI sebelum memanggil santri".into(),
+        ));
+    }
+
+    sqlx::query(
+        "INSERT INTO visit_status_logs (visit_id, from_status, to_status, actor_id, public_note, created_at)
+         VALUES (?1, 'CONFIRMED_BY_WALI', 'SANTRI_CALLED', ?2, ?3, ?4)"
+    )
+    .bind(visit_id)
+    .bind(&user.id)
+    .bind(note)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let detail = fetch_visit_detail(&state.db, visit_id).await?;
+    state.sse.emit_dormitory_event("dormitory_call", &detail);
+    state.sse.emit_public_flow_event(&detail);
+    Ok(detail)
+}
+
+pub async fn confirm_santri_by_musyrif(
+    state: &AppState,
+    user: &CurrentUser,
+    visit_id: &str,
+) -> Result<VisitDetailView, AppError> {
+    let pre_detail = fetch_visit_detail(&state.db, visit_id).await?;
+    user.require_admin_or_musyrif_for_dorm(&pre_detail.dormitory_id)?;
+
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let mut tx = state.db.begin().await?;
+
+    let res = sqlx::query(
+        "UPDATE visit_requests
+         SET current_status = 'SANTRI_CONFIRMED',
+             santri_notified_by_musyrif = 1,
+             titipan_confirmed_to_wali = 1,
+             updated_at = ?1
+         WHERE id = ?2 AND current_status = 'SANTRI_CALLED'"
+    )
+    .bind(&now_iso)
+    .bind(visit_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(AppError::Conflict("Tiket harus berstatus SANTRI_CALLED".into()));
+    }
+
+    sqlx::query(
+        "INSERT INTO visit_status_logs (visit_id, from_status, to_status, actor_id, public_note, created_at)
+         VALUES (?1, 'SANTRI_CALLED', 'SANTRI_CONFIRMED', ?2, 'Musyrif mengonfirmasi santri & info titipan telah disampaikan; terkonfirmasi ke Wali Santri', ?3)"
+    )
+    .bind(visit_id)
+    .bind(&user.id)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let detail = fetch_visit_detail(&state.db, visit_id).await?;
+    let titipan_info = if detail.has_titipan == 1 {
+        "beserta informasi titipan barang "
+    } else {
+        ""
+    };
+    let wa_msg = format!(
+        "Santri {} telah dikabari oleh Musyrif {} {}dan sedang menuju {}.",
+        detail.santri_name,
+        detail.dormitory_name,
+        titipan_info,
+        detail.spot_display()
+    );
+    state
+        .notifier
+        .notify_wali(Some(&detail.id), &detail.wali_phone, "SANTRI_READY", &wa_msg)
+        .await;
+    state.sse.emit_dormitory_event("dormitory_update", &detail);
+    state.sse.emit_public_flow_event(&detail);
+
+    Ok(detail)
+}
+
+pub async fn cancel_visit(
+    state: &AppState,
+    user: &CurrentUser,
+    visit_id: &str,
+    input: CancelVisitInput,
+) -> Result<VisitDetailView, AppError> {
+    let reason = input.cancel_reason.trim();
+    if reason.is_empty() || reason.len() > 250 {
+        return Err(AppError::BadRequest(
+            "Alasan pembatalan wajib diisi (maks 250 karakter)".into(),
+        ));
+    }
+
+    let pre_detail = fetch_visit_detail(&state.db, visit_id).await?;
+    match user.role {
+        UserRole::Wali => {
+            if pre_detail.wali_id != user.id {
+                return Err(AppError::Forbidden);
+            }
+            if !matches!(pre_detail.current_status.as_str(), "REQUESTED" | "SCHEDULED") {
+                return Err(AppError::Conflict(
+                    "Tiket tidak dapat dibatalkan oleh Wali pada tahap ini".into(),
+                ));
+            }
+        }
+        UserRole::Admin => {
+            if !matches!(
+                pre_detail.current_status.as_str(),
+                "REQUESTED" | "SCHEDULED" | "CONFIRMED_BY_WALI"
+            ) {
+                return Err(AppError::Conflict(
+                    "Tiket tidak dapat dibatalkan pada tahap ini".into(),
+                ));
+            }
+        }
+        _ => return Err(AppError::Forbidden),
+    }
+
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let note = format!("Kunjungan dibatalkan: {}", reason);
+
+    let mut tx = state.db.begin().await?;
+
+    let res = sqlx::query(
+        "UPDATE visit_requests
+         SET current_status = 'CANCELLED', cancel_reason = ?1, updated_at = ?2
+         WHERE id = ?3 AND current_status = ?4"
+    )
+    .bind(reason)
+    .bind(&now_iso)
+    .bind(visit_id)
+    .bind(&pre_detail.current_status)
+    .execute(&mut *tx)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(AppError::Conflict("Status tiket telah berubah".into()));
+    }
+
+    sqlx::query(
+        "INSERT INTO visit_status_logs (visit_id, from_status, to_status, actor_id, public_note, created_at)
+         VALUES (?1, ?2, 'CANCELLED', ?3, ?4, ?5)"
+    )
+    .bind(visit_id)
+    .bind(&pre_detail.current_status)
+    .bind(&user.id)
+    .bind(&note)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let detail = fetch_visit_detail(&state.db, visit_id).await?;
+    state.sse.emit_public_flow_event(&detail);
+    Ok(detail)
+}
+```
+
+## 4. Implementasi Lengkap Handler di `src/routes/visit_api.rs`
+
+```rust
+use axum::{
+    extract::{Form, Path, State},
+    http::{header::HeaderName, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    models::VisitDetailView,
+    services::visit_service::{
+        call_santri_to_dormitory, cancel_visit, confirm_santri_by_musyrif,
+        confirm_schedule_by_wali, create_visit_request, schedule_visit,
+        CancelVisitInput, CreateVisitInput, ScheduleVisitInput,
+    },
+    AppState,
+};
+
+fn htmx_json_response(status: StatusCode, detail: VisitDetailView) -> impl IntoResponse {
+    (
+        status,
+        [(HeaderName::from_static("hx-trigger"), "visitChanged")],
+        Json(detail),
+    )
+}
+
+pub async fn handle_create_visit(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(input): Form<CreateVisitInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let detail = create_visit_request(&state, &user, input).await?;
+    Ok(htmx_json_response(StatusCode::CREATED, detail))
+}
+
+pub async fn handle_schedule_visit(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(visit_id): Path<String>,
+    Form(input): Form<ScheduleVisitInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let detail = schedule_visit(&state, &user, &visit_id, input).await?;
+    Ok(htmx_json_response(StatusCode::OK, detail))
+}
+
+pub async fn handle_wali_confirm(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(visit_id): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let detail = confirm_schedule_by_wali(&state, &user, &visit_id).await?;
+    Ok(htmx_json_response(StatusCode::OK, detail))
+}
+
+pub async fn handle_call_santri(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(visit_id): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let detail = call_santri_to_dormitory(&state, &user, &visit_id).await?;
+    Ok(htmx_json_response(StatusCode::OK, detail))
+}
+
+pub async fn handle_musyrif_confirm(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(visit_id): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let detail = confirm_santri_by_musyrif(&state, &user, &visit_id).await?;
+    Ok(htmx_json_response(StatusCode::OK, detail))
+}
+
+pub async fn handle_cancel_visit(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(visit_id): Path<String>,
+    Form(input): Form<CancelVisitInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let detail = cancel_visit(&state, &user, &visit_id, input).await?;
+    Ok(htmx_json_response(StatusCode::OK, detail))
+}
+```
+
+## 5. Checklist Verifikasi Modul 03
+
+* [ ] `schedule_visit` menormalisasi `"9:00"` menjadi `"09:00"` menggunakan `validate_hhmm_time` sebelum membandingkan `start_hhmm >= end_hhmm`.
+* [ ] Seluruh 6 fungsi di `src/services/visit_service.rs` langsung menjalankan pernyataan tulis (`INSERT` atau `UPDATE`) sebagai operasi pertama di dalam `tx`.
+
+
+==================== END OF DOCUMENT: MOD_03_SAMBANG_STATE_ENGINE.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_04_SSE_AND_WA_GATEWAY.md ====================
+
+# Modul 04 — Real-Time SSE Broadcaster & Multi-Domain WhatsApp Gateway (`MOD_04_SSE_AND_WA_GATEWAY.md`)
+
+Modul ini menyediakan dua komponen komunikasi asinkron hemat memori untuk seluruh modul **SiPesantren**:
+1. **Bounded SSE Broadcaster (`SseBroadcaster`)**: Mengirim *event* real-time ke layar panggilan asrama Musyrif dan papan alur Pihak Ketiga.
+2. **Multi-Domain WhatsApp Gateway Adapter (`NotificationGateway`)**: Mendukung pengiriman atau pencatatan notifikasi untuk **Sambang** (`SCHEDULE_SET`, `SANTRI_READY`, `COMPLETED`) maupun **Akademik/Tahfidz** (`TAHFIDZ_RECORDED`, `RAPOR_PUBLISHED`), dengan mode default `SKIPPED_DISABLED` saat `WA_GATEWAY_ENABLED=false`.
+
+## 1. Scope & File Ownership
+
+* `src/sse.rs`
+* `src/notification.rs`
+* `src/routes/sse_routes.rs`
+
+## 2. Aturan Anti-Slop Khusus Modul 04
+
+1. **Bounded Ring Buffer**: Dilarang menggunakan *unbounded channel*. Kapasitas `broadcast::channel` dikunci pada `256` pesan.
+2. **Zero PII Leak on Public SSE**: Fungsi `emit_public_flow_event` wajib menyensor `santri_name` melalui `mask_santri_name` dan mengosongkan `room_name` serta `titipan_description` sebelum pesan dimasukkan ke *channel*.
+
+## 3. Implementasi Bounded SSE Broadcaster (`src/sse.rs`)
+
+```rust
+use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
+
+use crate::models::{mask_santri_name, VisitDetailView};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SseMessage {
+    pub event_name: String,
+    pub target_dormitory_id: Option<String>,
+    pub visit_id: String,
+    pub ticket_code: String,
+    pub current_status: String,
+    pub santri_name: String,
+    pub room_name: String,
+    pub meeting_spot: Option<String>,
+    pub has_titipan: bool,
+    pub titipan_description: Option<String>,
+    pub timestamp: String,
+}
+
+pub struct SseBroadcaster {
+    tx: broadcast::Sender<SseMessage>,
+}
+
+impl SseBroadcaster {
+    pub fn new() -> Self {
+        let (tx, _rx) = broadcast::channel(256);
+        Self { tx }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<SseMessage> {
+        self.tx.subscribe()
+    }
+
+    pub fn emit_dormitory_event(&self, event_name: &str, detail: &VisitDetailView) {
+        let msg = SseMessage {
+            event_name: event_name.to_string(),
+            target_dormitory_id: Some(detail.dormitory_id.clone()),
+            visit_id: detail.id.clone(),
+            ticket_code: detail.ticket_code.clone(),
+            current_status: detail.current_status.clone(),
+            santri_name: detail.santri_name.clone(),
+            room_name: detail.room_name.clone(),
+            meeting_spot: detail.meeting_spot.clone(),
+            has_titipan: detail.has_titipan == 1,
+            titipan_description: detail.titipan_description.clone(),
+            timestamp: detail.updated_at.clone(),
+        };
+        let _ = self.tx.send(msg);
+    }
+
+    pub fn emit_public_flow_event(&self, detail: &VisitDetailView) {
+        let msg = SseMessage {
+            event_name: "public_flow_updated".to_string(),
+            target_dormitory_id: None,
+            visit_id: detail.id.clone(),
+            ticket_code: detail.ticket_code.clone(),
+            current_status: detail.current_status.clone(),
+            santri_name: mask_santri_name(&detail.santri_name),
+            room_name: String::new(),
+            meeting_spot: detail.meeting_spot.clone(),
+            has_titipan: detail.has_titipan == 1,
+            titipan_description: None,
+            timestamp: detail.updated_at.clone(),
+        };
+        let _ = self.tx.send(msg);
+    }
+}
+```
+
+## 4. Endpoint Streaming SSE (`src/routes/sse_routes.rs`)
+
+```rust
+use std::{convert::Infallible, time::Duration};
+use axum::{
+    extract::{Path, State},
+    response::sse::{Event, KeepAlive, Sse},
+};
+use futures_util::stream::Stream;
+use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+
+use crate::{auth::CurrentUser, error::AppError, AppState};
+
+pub async fn sse_dormitory_stream(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(dorm_id): Path<String>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
+    user.require_admin_or_musyrif_for_dorm(&dorm_id)?;
+
+    let rx = state.sse.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(move |res| match res {
+        Ok(msg) if msg.target_dormitory_id.as_deref() == Some(dorm_id.as_str()) => {
+            let json_payload = serde_json::to_string(&msg).unwrap_or_default();
+            Some(Ok(Event::default().event(msg.event_name).data(json_payload)))
+        }
+        _ => None,
+    });
+
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
+}
+
+pub async fn sse_public_flow_stream(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.sse.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(msg) if msg.event_name == "public_flow_updated" => {
+            let json_payload = serde_json::to_string(&msg).unwrap_or_default();
+            Some(Ok(Event::default().event("public_flow_updated").data(json_payload)))
+        }
+        _ => None,
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
+}
+```
+
+## 5. Multi-Domain WhatsApp Gateway Adapter (`src/notification.rs`)
+
+Parameter `visit_id` bertipe `Option<&str>` agar dapat digunakan baik oleh tiket Sambang (`Some(visit_id)`) maupun oleh pencatatan Tahfidz dan Nilai Ujian (`None`):
+
+```rust
+use async_trait::async_trait;
+use chrono::Utc;
+use serde_json::json;
+use sqlx::SqlitePool;
+
+use crate::config::AppConfig;
+
+#[async_trait]
+pub trait NotificationGateway: Send + Sync {
+    async fn notify_wali(
+        &self,
+        visit_id: Option<&str>,
+        recipient_phone: &str,
+        event_type: &str,
+        message_body: &str,
+    );
+}
+
+pub struct ConfigurableWaGateway {
+    db: SqlitePool,
+    enabled: bool,
+    gateway_url: String,
+    api_key: String,
+    http_client: reqwest::Client,
+}
+
+impl ConfigurableWaGateway {
+    pub fn new(db: SqlitePool, cfg: &AppConfig) -> Self {
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+
+        Self {
+            db,
+            enabled: cfg.wa_gateway_enabled,
+            gateway_url: cfg.wa_gateway_url.clone(),
+            api_key: cfg.wa_gateway_api_key.clone(),
+            http_client,
+        }
+    }
+}
+
+#[async_trait]
+impl NotificationGateway for ConfigurableWaGateway {
+    async fn notify_wali(
+        &self,
+        visit_id: Option<&str>,
+        recipient_phone: &str,
+        event_type: &str,
+        message_body: &str,
+    ) {
+        if !self.enabled || self.gateway_url.trim().is_empty() {
+            let _ = sqlx::query(
+                "INSERT INTO notification_outbox (visit_id, recipient_phone, event_type, message_body, delivery_status)
+                 VALUES (?1, ?2, ?3, ?4, 'SKIPPED_DISABLED')"
+            )
+            .bind(visit_id)
+            .bind(recipient_phone)
+            .bind(event_type)
+            .bind(message_body)
+            .execute(&self.db)
+            .await;
+            return;
+        }
+
+        let insert_res = sqlx::query(
+            "INSERT INTO notification_outbox (visit_id, recipient_phone, event_type, message_body, delivery_status)
+             VALUES (?1, ?2, ?3, ?4, 'PENDING')"
+        )
+        .bind(visit_id)
+        .bind(recipient_phone)
+        .bind(event_type)
+        .bind(message_body)
+        .execute(&self.db)
+        .await;
+
+        let Ok(done) = insert_res else { return };
+        let outbox_id = done.last_insert_rowid();
+
+        let payload = json!({
+            "chatId": format!("{}@c.us", recipient_phone.trim_start_matches('+')),
+            "phone": recipient_phone,
+            "text": message_body,
+        });
+
+        let mut req = self.http_client.post(&self.gateway_url).json(&payload);
+        if !self.api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                let _ = sqlx::query(
+                    "UPDATE notification_outbox SET delivery_status = 'SENT', sent_at = ?1 WHERE id = ?2"
+                )
+                .bind(now_iso)
+                .bind(outbox_id)
+                .execute(&self.db)
+                .await;
+            }
+            Ok(resp) => {
+                let err_msg = format!("HTTP {}", resp.status());
+                let _ = sqlx::query(
+                    "UPDATE notification_outbox SET delivery_status = 'FAILED', error_message = ?1 WHERE id = ?2"
+                )
+                .bind(err_msg)
+                .bind(outbox_id)
+                .execute(&self.db)
+                .await;
+            }
+            Err(err) => {
+                let _ = sqlx::query(
+                    "UPDATE notification_outbox SET delivery_status = 'FAILED', error_message = ?1 WHERE id = ?2"
+                )
+                .bind(err.to_string())
+                .bind(outbox_id)
+                .execute(&self.db)
+                .await;
+            }
+        }
+    }
+}
+```
+
+## 6. Checklist Verifikasi Modul 04
+
+* [ ] `notify_wali` menerima `visit_id: Option<&str>` sehingga kompatibel untuk `Some(&detail.id)` pada Sambang dan `None` pada Tahfidz/Nilai.
+* [ ] Saat `WA_GATEWAY_ENABLED=false`, seluruh pesan tercatat di `notification_outbox` dengan status `SKIPPED_DISABLED`.
+
+
+==================== END OF DOCUMENT: MOD_04_SSE_AND_WA_GATEWAY.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_05_LOGBOOK_PRIVATE_PHOTO.md ====================
+
+# Modul 05 — Meeting Logbook & Private Photo Storage (`MOD_05_LOGBOOK_PRIVATE_PHOTO.md`)
+
+Modul ini menangani tahap akhir alur sambang (`SANTRI_CONFIRMED -> COMPLETED`): penerimaan unggahan **Foto Pertemuan antara Wali Santri dan Santri**, validasi *magic bytes* gambar, eksekusi database *write-first* sebelum menulis ke disk, serta penyajian gambar (`GET /api/visits/:id/logbook/photo`) yang dikunci ketat hanya untuk **Admin** dan **Wali Santri terkait**.
+
+## 1. Scope & File Ownership
+
+* `src/services/logbook_service.rs`
+* `src/routes/logbook_routes.rs`
+
+## 2. Aturan Anti-Slop & Root-Cause Guardrails Modul 05
+
+1. **Strict `visit_id` Sanitization**: Sebelum memproses *path* apa pun, pastikan `visit_id` tidak kosong dan hanya terdiri dari karakter alfanumerik ASCII atau tanda hubung (`visit_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')`) untuk menutup celah *path traversal* dari akar.
+2. **DB-Transaction First, Disk-Write Before Commit**:
+   * Jangan pernah menulis file ke disk sebelum memverifikasi bahwa `UPDATE visit_requests ... WHERE id = ?2 AND current_status = 'SANTRI_CONFIRMED'` menghasilkan `rows_affected() == 1` di dalam transaksi `tx`.
+   * Setelah `UPDATE` dan `INSERT INTO visit_logbooks` berhasil di dalam `tx`, barulah tulis file foto ke disk (`fs::write`). Jika penulisan disk gagal, kembalikan `Err(...)` sehingga `tx` otomatis di-*rollback* saat di-drop. Hanya panggil `tx.commit().await?` setelah file tersimpan utuh di disk.
+3. **Strict 4-Role Privacy Check**: Pada `get_protected_logbook_photo`, peran `MUSYRIF`, `ASATIDZ`, `WALI` santri lain, dan pengunjung tanpa login (`PUBLIC_VIEWER`) wajib ditolak (`403 Forbidden` / `401 Unauthorized`).
+
+## 3. Implementasi Lengkap `src/services/logbook_service.rs`
+
+```rust
+use chrono::Utc;
+use sha2::{Digest, Sha256};
+use tokio::fs;
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    models::{UserRole, VisitDetailView},
+    services::visit_service::SELECT_VISIT_DETAIL_SQL,
+    AppState,
+};
+
+pub fn validate_safe_id(id: &str) -> Result<(), AppError> {
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(AppError::BadRequest("Format ID kunjungan tidak valid".into()));
+    }
+    Ok(())
+}
+
+pub fn detect_image_format(bytes: &[u8]) -> Result<(&'static str, &'static str), AppError> {
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Ok(("image/webp", "webp"));
+    }
+    if bytes.len() >= 3 && bytes[0..3] == [0xFF, 0xD8, 0xFF] {
+        return Ok(("image/jpeg", "jpg"));
+    }
+    if bytes.len() >= 8 && bytes[0..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return Ok(("image/png", "png"));
+    }
+    Err(AppError::BadRequest(
+        "File tidak valid: wajib berupa foto WebP, JPEG, atau PNG".to_string(),
+    ))
+}
+
+pub async fn complete_visit_with_logbook(
+    state: &AppState,
+    admin: &CurrentUser,
+    visit_id: &str,
+    photo_bytes: Vec<u8>,
+    meeting_notes: Option<String>,
+) -> Result<VisitDetailView, AppError> {
+    admin.require_role(UserRole::Admin)?;
+    validate_safe_id(visit_id)?;
+
+    if photo_bytes.is_empty() {
+        return Err(AppError::BadRequest("Foto pertemuan wajib diunggah".into()));
+    }
+    if photo_bytes.len() > state.config.max_photo_upload_bytes {
+        return Err(AppError::BadRequest(
+            "Ukuran foto melebihi batas maksimal 2 MB".into(),
+        ));
+    }
+
+    let (_mime, ext) = detect_image_format(&photo_bytes)?;
+
+    let now = Utc::now();
+    let year_month = now.format("%Y/%m").to_string();
+    let now_iso = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let filename = format!("{}.{}", visit_id, ext);
+    let photo_rel_path = format!("{}/{}", year_month, filename);
+    let rel_dir = state.photo_base_dir.join(&year_month);
+    let full_disk_path = state.photo_base_dir.join(&photo_rel_path);
+
+    let mut hasher = Sha256::new();
+    hasher.update(&photo_bytes);
+    let photo_sha256 = hex::encode(hasher.finalize());
+    let photo_size_bytes = photo_bytes.len() as i64;
+
+    // 1. Mulai transaksi DB terlebih dahulu sebelum menyentuh disk
+    let mut tx = state.db.begin().await?;
+
+    let update_res = sqlx::query(
+        "UPDATE visit_requests
+         SET current_status = 'COMPLETED', updated_at = ?1
+         WHERE id = ?2 AND current_status = 'SANTRI_CONFIRMED'"
+    )
+    .bind(&now_iso)
+    .bind(visit_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if update_res.rows_affected() == 0 {
+        return Err(AppError::Conflict(
+            "Tiket harus berstatus SANTRI_CONFIRMED sebelum mengisi Logbook".into(),
+        ));
+    }
+
+    let logbook_id = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO visit_logbooks (
+            id, visit_id, captured_by_admin_id, photo_rel_path,
+            photo_size_bytes, photo_sha256, meeting_notes, meeting_timestamp
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+    )
+    .bind(&logbook_id)
+    .bind(visit_id)
+    .bind(&admin.id)
+    .bind(&photo_rel_path)
+    .bind(photo_size_bytes)
+    .bind(&photo_sha256)
+    .bind(meeting_notes.as_deref().map(str::trim))
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO visit_status_logs (visit_id, from_status, to_status, actor_id, public_note, created_at)
+         VALUES (?1, 'SANTRI_CONFIRMED', 'COMPLETED', ?2, 'Pertemuan Wali Santri & Santri selesai dan terdokumentasi di Logbook', ?3)"
+    )
+    .bind(visit_id)
+    .bind(&admin.id)
+    .bind(&now_iso)
+    .execute(&mut *tx)
+    .await?;
+
+    // 2. Hanya tulis ke disk setelah DB update tervalidasi; jika gagal, tx otomatis rollback
+    fs::create_dir_all(&rel_dir)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Gagal membuat folder foto: {}", e)))?;
+
+    fs::write(&full_disk_path, &photo_bytes)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Gagal menyimpan file foto: {}", e)))?;
+
+    // 3. Commit transaksi setelah file berhasil ditulis ke disk
+    tx.commit().await?;
+
+    let query_sql = format!("{} WHERE v.id = ?1", SELECT_VISIT_DETAIL_SQL);
+    let detail: VisitDetailView = sqlx::query_as(&query_sql)
+        .bind(visit_id)
+        .fetch_one(&state.db)
+        .await?;
+
+    let wa_msg = format!(
+        "Alhamdulillah, kunjungan sambang untuk {} ({}) telah selesai dan tercatat di Logbook. Dokumentasi foto pertemuan dapat dilihat di akun SiPesantren Anda.",
+        detail.santri_name, detail.ticket_code
+    );
+    state
+        .notifier
+        .notify_wali(Some(&detail.id), &detail.wali_phone, "COMPLETED", &wa_msg)
+        .await;
+
+    state.sse.emit_dormitory_event("dormitory_update", &detail);
+    state.sse.emit_public_flow_event(&detail);
+
+    Ok(detail)
+}
+```
+
+## 4. Implementasi Lengkap Endpoint Upload & Streaming Foto Terproteksi (`src/routes/logbook_routes.rs`)
+
+```rust
+use axum::{
+    extract::{Multipart, Path, State},
+    http::{header, HeaderMap, HeaderName, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+use tokio::fs;
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    models::UserRole,
+    services::logbook_service::{
+        complete_visit_with_logbook, detect_image_format, validate_safe_id,
+    },
+    AppState,
+};
+
+pub async fn handle_upload_logbook(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(visit_id): Path<String>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, AppError> {
+    user.require_role(UserRole::Admin)?;
+    validate_safe_id(&visit_id)?;
+
+    let mut photo_bytes: Option<Vec<u8>> = None;
+    let mut meeting_notes: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Multipart error: {}", e)))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "photo" {
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| AppError::BadRequest(format!("Gagal membaca byte foto: {}", e)))?;
+            photo_bytes = Some(data.to_vec());
+        } else if name == "meeting_notes" {
+            let txt = field
+                .text()
+                .await
+                .map_err(|e| AppError::BadRequest(format!("Gagal membaca catatan: {}", e)))?;
+            if !txt.trim().is_empty() {
+                meeting_notes = Some(txt);
+            }
+        }
+    }
+
+    let bytes = photo_bytes.ok_or_else(|| AppError::BadRequest("Field 'photo' wajib dikirim".into()))?;
+    let detail = complete_visit_with_logbook(&state, &user, &visit_id, bytes, meeting_notes).await?;
+
+    Ok((
+        StatusCode::OK,
+        [(HeaderName::from_static("hx-trigger"), "visitChanged")],
+        Json(detail),
+    ))
+}
+
+pub async fn get_protected_logbook_photo(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(visit_id): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    validate_safe_id(&visit_id)?;
+
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT v.wali_id, l.photo_rel_path
+         FROM visit_requests v
+         JOIN visit_logbooks l ON l.visit_id = v.id
+         WHERE v.id = ?1"
+    )
+    .bind(&visit_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (owner_wali_id, photo_rel_path) =
+        row.ok_or_else(|| AppError::NotFound("Foto logbook tidak ditemukan".into()))?;
+
+    let is_authorized = match user.role {
+        UserRole::Admin => true,
+        UserRole::Wali => user.id == owner_wali_id,
+        UserRole::Musyrif | UserRole::Asatidz => false,
+    };
+
+    if !is_authorized {
+        return Err(AppError::Forbidden);
+    }
+
+    if photo_rel_path.contains("..") {
+        return Err(AppError::Forbidden);
+    }
+
+    let full_path = state.photo_base_dir.join(&photo_rel_path);
+    let bytes = fs::read(&full_path)
+        .await
+        .map_err(|_| AppError::NotFound("File foto tidak ditemukan di penyimpanan".into()))?;
+
+    let (mime_type, _) = detect_image_format(&bytes).unwrap_or(("image/webp", "webp"));
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, mime_type.parse().unwrap());
+    headers.insert(
+        header::CACHE_CONTROL,
+        "private, no-transform, max-age=86400".parse().unwrap(),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().unwrap(),
+    );
+
+    Ok((StatusCode::OK, headers, bytes))
+}
+```
+
+## 5. Checklist Verifikasi Modul 05
+
+* [ ] `validate_safe_id` menolak `visit_id` yang mengandung karakter di luar alfanumerik/tanda hubung.
+* [ ] Disk tidak pernah disentuh jika `visit_id` tidak ditemukan atau statusnya bukan `SANTRI_CONFIRMED`.
+* [ ] Peran `UserRole::Asatidz` dan `UserRole::Musyrif` eksplisit ditolak (`403 Forbidden`) saat mengakses foto pertemuan.
+
+
+==================== END OF DOCUMENT: MOD_05_LOGBOOK_PRIVATE_PHOTO.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_06_TAHFIDZ_AND_KESANTRIAN.md ====================
+
+# Modul 06 — Tahfidz, Mutun Kitab & Kesantrian Tracker (`MOD_06_TAHFIDZ_AND_KESANTRIAN.md`)
+
+Modul ini mengimplementasikan layanan dan API untuk **Pilar 2 (Tracking Hafalan Al-Qur'an & Kitab/Mutun)** serta **Pilar 4 (Absensi Harian, Perizinan & Catatan Pembinaan Kesantrian Non-Keuangan)**.
+
+## 1. Scope & File Ownership
+
+* `src/services/tahfidz_service.rs`
+* `src/services/kesantrian_service.rs`
+* `src/routes/tahfidz_api.rs`
+* `src/routes/kesantrian_api.rs`
+
+## 2. Aturan Anti-Slop & Root-Cause Guardrails Modul 06
+
+1. **Canonical Date Normalization**: Semua tanggal (`session_date`, `attendance_date`, `note_date`) wajib divalidasi dengan `validate_iso_date` dari `src/models.rs` sebelum disimpan ke database.
+2. **Safe HTML Form Optional Integer Parsing**: Gunakan `deserialize_optional_i64` untuk `update_total_juz` agar string kosong `""` dari form HTML diubah menjadi `None` tanpa error.
+3. **Idempotent Attendance Upsert**: Pencatatan absensi harian (`attendance_logs`) wajib menggunakan `ON CONFLICT(santri_id, attendance_date, activity_type) DO UPDATE`.
+
+## 3. Implementasi Layanan Tahfidz & Mutun (`src/services/tahfidz_service.rs`)
+
+```rust
+use serde::Deserialize;
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    models::{validate_iso_date, TahfidzLogView},
+    AppState,
+};
+
+pub const SELECT_TAHFIDZ_LOG_SQL: &str = r#"
+SELECT
+    t.id,
+    t.santri_id,
+    s.full_name AS santri_name,
+    s.nis AS santri_nis,
+    t.evaluator_id,
+    u.full_name AS evaluator_name,
+    t.session_date,
+    t.log_type,
+    t.juz_number,
+    t.surah_or_kitab,
+    t.ayah_or_bait_start,
+    t.ayah_or_bait_end,
+    t.predicate,
+    t.score_numeric,
+    t.notes,
+    t.created_at
+FROM tahfidz_logs t
+JOIN santri s ON s.id = t.santri_id
+JOIN users u ON u.id = t.evaluator_id
+"#;
+
+pub fn deserialize_optional_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OptIntOrStr {
+        Int(i64),
+        Str(String),
+    }
+
+    match Option::<OptIntOrStr>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(OptIntOrStr::Int(v)) => Ok(Some(v)),
+        Some(OptIntOrStr::Str(s)) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                trimmed.parse::<i64>().map(Some).map_err(serde::de::Error::custom)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTahfidzInput {
+    pub santri_id: String,
+    pub session_date: String,
+    pub log_type: String,
+    pub juz_number: i64,
+    pub surah_or_kitab: String,
+    pub ayah_or_bait_start: i64,
+    pub ayah_or_bait_end: i64,
+    pub predicate: String,
+    pub score_numeric: i64,
+    pub notes: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    pub update_total_juz: Option<i64>,
+}
+
+pub async fn record_tahfidz_log(
+    state: &AppState,
+    actor: &CurrentUser,
+    input: CreateTahfidzInput,
+) -> Result<TahfidzLogView, AppError> {
+    let clean_date = validate_iso_date(&input.session_date)?;
+
+    let santri_row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT s.dormitory_id, s.full_name, u.phone_number
+         FROM santri s
+         JOIN users u ON u.id = s.primary_wali_id
+         WHERE s.id = ?1 AND s.is_active = 1"
+    )
+    .bind(&input.santri_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (dorm_id, santri_name, wali_phone) =
+        santri_row.ok_or_else(|| AppError::NotFound("Santri tidak ditemukan".into()))?;
+
+    actor.require_staff_for_dorm(&dorm_id)?;
+
+    if !matches!(
+        input.log_type.as_str(),
+        "ZIYADAH" | "MUROJAAH" | "TASMI_JUZ" | "MUTUN_KITAB"
+    ) {
+        return Err(AppError::BadRequest("Jenis setoran tidak valid".into()));
+    }
+    if !(1..=30).contains(&input.juz_number) {
+        return Err(AppError::BadRequest("Nomor Juz harus antara 1 sampai 30".into()));
+    }
+    if input.surah_or_kitab.trim().is_empty() {
+        return Err(AppError::BadRequest("Nama Surah atau Kitab wajib diisi".into()));
+    }
+    if input.ayah_or_bait_start < 1 || input.ayah_or_bait_end < input.ayah_or_bait_start {
+        return Err(AppError::BadRequest("Rentang ayat/bait tidak valid".into()));
+    }
+    if !matches!(
+        input.predicate.as_str(),
+        "MUMTAZ" | "JAYYID_JIDDAN" | "JAYYID" | "MAQBUL" | "MENGULANG"
+    ) {
+        return Err(AppError::BadRequest("Predikat kelancaran tidak valid".into()));
+    }
+    if !(0..=100).contains(&input.score_numeric) {
+        return Err(AppError::BadRequest("Skor harus antara 0 sampai 100".into()));
+    }
+
+    let id = uuid::Uuid::now_v7().to_string();
+    let mut tx = state.db.begin().await?;
+
+    sqlx::query(
+        "INSERT INTO tahfidz_logs (
+            id, santri_id, evaluator_id, session_date, log_type,
+            juz_number, surah_or_kitab, ayah_or_bait_start, ayah_or_bait_end,
+            predicate, score_numeric, notes
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+    )
+    .bind(&id)
+    .bind(&input.santri_id)
+    .bind(&actor.id)
+    .bind(&clean_date)
+    .bind(&input.log_type)
+    .bind(input.juz_number)
+    .bind(input.surah_or_kitab.trim())
+    .bind(input.ayah_or_bait_start)
+    .bind(input.ayah_or_bait_end)
+    .bind(&input.predicate)
+    .bind(input.score_numeric)
+    .bind(input.notes.as_deref().map(str::trim))
+    .execute(&mut *tx)
+    .await?;
+
+    if input.log_type == "ZIYADAH" || input.log_type == "TASMI_JUZ" {
+        let focus = format!(
+            "Juz {} ({} : {}-{})",
+            input.juz_number,
+            input.surah_or_kitab.trim(),
+            input.ayah_or_bait_start,
+            input.ayah_or_bait_end
+        );
+        if let Some(new_total) = input.update_total_juz {
+            if (0..=30).contains(&new_total) {
+                sqlx::query(
+                    "UPDATE santri SET total_juz_memorized = ?1, current_surah_focus = ?2 WHERE id = ?3"
+                )
+                .bind(new_total)
+                .bind(&focus)
+                .bind(&input.santri_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        } else {
+            sqlx::query("UPDATE santri SET current_surah_focus = ?1 WHERE id = ?2")
+                .bind(&focus)
+                .bind(&input.santri_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+
+    tx.commit().await?;
+
+    let sql = format!("{} WHERE t.id = ?1", SELECT_TAHFIDZ_LOG_SQL);
+    let view: TahfidzLogView = sqlx::query_as(&sql)
+        .bind(&id)
+        .fetch_one(&state.db)
+        .await?;
+
+    let wa_msg = format!(
+        "Laporan Tahfidz {}: {} ({} ayat/bait {}-{}) dengan predikat {} (Skor {}). Penyimak: {}.",
+        santri_name,
+        view.log_type,
+        view.surah_or_kitab,
+        view.ayah_or_bait_start,
+        view.ayah_or_bait_end,
+        view.predicate,
+        view.score_numeric,
+        view.evaluator_name
+    );
+    state
+        .notifier
+        .notify_wali(None, &wali_phone, "TAHFIDZ_RECORDED", &wa_msg)
+        .await;
+
+    Ok(view)
+}
+```
+
+## 4. Implementasi Layanan Absensi & Catatan Kesantrian (`src/services/kesantrian_service.rs`)
+
+```rust
+use serde::Deserialize;
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    models::{validate_iso_date, AttendanceLogView, SantriNoteView},
+    AppState,
+};
+
+#[derive(Debug, Deserialize)]
+pub struct RecordAttendanceInput {
+    pub santri_id: String,
+    pub attendance_date: String,
+    pub activity_type: String,
+    pub status: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSantriNoteInput {
+    pub santri_id: String,
+    pub note_date: String,
+    pub category: String,
+    pub title: String,
+    pub description: String,
+}
+
+pub async fn upsert_attendance_log(
+    state: &AppState,
+    actor: &CurrentUser,
+    input: RecordAttendanceInput,
+) -> Result<AttendanceLogView, AppError> {
+    let clean_date = validate_iso_date(&input.attendance_date)?;
+
+    let dorm_id: Option<String> = sqlx::query_scalar(
+        "SELECT dormitory_id FROM santri WHERE id = ?1 AND is_active = 1"
+    )
+    .bind(&input.santri_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let dorm_id = dorm_id.ok_or_else(|| AppError::NotFound("Santri tidak ditemukan".into()))?;
+    actor.require_staff_for_dorm(&dorm_id)?;
+
+    if !matches!(
+        input.activity_type.as_str(),
+        "SHOLAT_JAMAAH" | "KBM_DINIYAH" | "HALAQAH_TAHFIDZ" | "ASRAMA_MALAM"
+    ) {
+        return Err(AppError::BadRequest("Jenis kegiatan absensi tidak valid".into()));
+    }
+    if !matches!(input.status.as_str(), "HADIR" | "SAKIT" | "IZIN" | "ALFA") {
+        return Err(AppError::BadRequest("Status kehadiran tidak valid".into()));
+    }
+
+    let id = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO attendance_logs (id, santri_id, attendance_date, activity_type, status, note, recorded_by_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(santri_id, attendance_date, activity_type) DO UPDATE SET
+            status = excluded.status,
+            note = excluded.note,
+            recorded_by_id = excluded.recorded_by_id"
+    )
+    .bind(&id)
+    .bind(&input.santri_id)
+    .bind(&clean_date)
+    .bind(&input.activity_type)
+    .bind(&input.status)
+    .bind(input.note.as_deref().map(str::trim))
+    .bind(&actor.id)
+    .execute(&state.db)
+    .await?;
+
+    let row: AttendanceLogView = sqlx::query_as(
+        "SELECT a.id, a.santri_id, s.full_name AS santri_name, a.attendance_date,
+                a.activity_type, a.status, a.note, u.full_name AS recorded_by_name, a.created_at
+         FROM attendance_logs a
+         JOIN santri s ON s.id = a.santri_id
+         JOIN users u ON u.id = a.recorded_by_id
+         WHERE a.santri_id = ?1 AND a.attendance_date = ?2 AND a.activity_type = ?3"
+    )
+    .bind(&input.santri_id)
+    .bind(&clean_date)
+    .bind(&input.activity_type)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn create_santri_note(
+    state: &AppState,
+    actor: &CurrentUser,
+    input: CreateSantriNoteInput,
+) -> Result<SantriNoteView, AppError> {
+    let clean_date = validate_iso_date(&input.note_date)?;
+
+    let dorm_id: Option<String> = sqlx::query_scalar(
+        "SELECT dormitory_id FROM santri WHERE id = ?1 AND is_active = 1"
+    )
+    .bind(&input.santri_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let dorm_id = dorm_id.ok_or_else(|| AppError::NotFound("Santri tidak ditemukan".into()))?;
+    actor.require_staff_for_dorm(&dorm_id)?;
+
+    if !matches!(
+        input.category.as_str(),
+        "PRESTASI" | "PEMBINAAN_ADAB" | "IZIN_KESEHATAN_PULANG"
+    ) {
+        return Err(AppError::BadRequest("Kategori catatan tidak valid".into()));
+    }
+    if input.title.trim().is_empty() || input.description.trim().is_empty() {
+        return Err(AppError::BadRequest("Judul dan deskripsi catatan wajib diisi".into()));
+    }
+
+    let id = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO santri_notes (id, santri_id, note_date, category, title, description, recorded_by_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+    )
+    .bind(&id)
+    .bind(&input.santri_id)
+    .bind(&clean_date)
+    .bind(&input.category)
+    .bind(input.title.trim())
+    .bind(input.description.trim())
+    .bind(&actor.id)
+    .execute(&state.db)
+    .await?;
+
+    let view: SantriNoteView = sqlx::query_as(
+        "SELECT n.id, n.santri_id, s.full_name AS santri_name, n.note_date,
+                n.category, n.title, n.description, u.full_name AS recorded_by_name, n.created_at
+         FROM santri_notes n
+         JOIN santri s ON s.id = n.santri_id
+         JOIN users u ON u.id = n.recorded_by_id
+         WHERE n.id = ?1"
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(view)
+}
+```
+
+## 5. Implementasi Handler Route (`src/routes/tahfidz_api.rs` & `src/routes/kesantrian_api.rs`)
+
+### File `src/routes/tahfidz_api.rs`
+```rust
+use axum::{
+    extract::{Form, State},
+    http::{header::HeaderName, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    services::tahfidz_service::{record_tahfidz_log, CreateTahfidzInput},
+    AppState,
+};
+
+pub async fn handle_record_tahfidz(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(input): Form<CreateTahfidzInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let log = record_tahfidz_log(&state, &user, input).await?;
+    Ok((
+        StatusCode::CREATED,
+        [(HeaderName::from_static("hx-trigger"), "dataChanged")],
+        Json(log),
+    ))
+}
+```
+
+### File `src/routes/kesantrian_api.rs`
+```rust
+use axum::{
+    extract::{Form, State},
+    http::{header::HeaderName, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    services::kesantrian_service::{
+        create_santri_note, upsert_attendance_log, CreateSantriNoteInput, RecordAttendanceInput,
+    },
+    AppState,
+};
+
+pub async fn handle_upsert_attendance(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(input): Form<RecordAttendanceInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let row = upsert_attendance_log(&state, &user, input).await?;
+    Ok((
+        StatusCode::OK,
+        [(HeaderName::from_static("hx-trigger"), "dataChanged")],
+        Json(row),
+    ))
+}
+
+pub async fn handle_create_santri_note(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(input): Form<CreateSantriNoteInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let row = create_santri_note(&state, &user, input).await?;
+    Ok((
+        StatusCode::CREATED,
+        [(HeaderName::from_static("hx-trigger"), "dataChanged")],
+        Json(row),
+    ))
+}
+```
+
+## 6. Checklist Verifikasi Modul 06
+
+* [ ] Seluruh tanggal input (`session_date`, `attendance_date`, `note_date`) divalidasi dengan `validate_iso_date`.
+* [ ] `deserialize_optional_i64` menangani input `update_total_juz=""` (kosong) maupun angka valid (`update_total_juz=6`).
+
+
+==================== END OF DOCUMENT: MOD_06_TAHFIDZ_AND_KESANTRIAN.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_07_EXAMS_GRADES_AND_RAPOR.md ====================
+
+# Modul 07 — Academic Exams, Grading Engine & Digital Rapor (`MOD_07_EXAMS_GRADES_AND_RAPOR.md`)
+
+Modul ini mengimplementasikan layanan dan API untuk **Pilar 3 (Manajemen Jadwal Ujian, Input Nilai & Kalkulasi Rapor Digital Santri)**.
+
+## 1. Scope & File Ownership
+
+* `src/services/academic_service.rs`
+* `src/routes/academic_api.rs`
+
+## 2. Aturan Anti-Slop & Root-Cause Guardrails Modul 07
+
+1. **Canonical Date & Score Validation**: Tanggal ujian (`exam_date`) wajib divalidasi dengan `validate_iso_date`, dan skor wajib `0.0..=100.0` (serta `!input.score.is_nan()`).
+2. **Askama Display-Safe Rapor Fields**: Fungsi `build_santri_rapor_rows` wajib mengisi baik nilai numerik (`Option<f64>`) maupun string tampilan (`harian_display`, `uts_display`, `uas_display`, `syafahi_display`, `final_display`) sehingga template Askama tidak pernah gagal dikompilasi karena mencoba merender `Option<f64>` secara langsung.
+
+## 3. Implementasi Layanan Ujian, Nilai & Rapor (`src/services/academic_service.rs`)
+
+```rust
+use chrono::Utc;
+use serde::Deserialize;
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    models::{
+        compute_grade_predicate, validate_iso_date, ExamGradeView, ExamView,
+        RaporSubjectRow, Subject,
+    },
+    AppState,
+};
+
+#[derive(Debug, Deserialize)]
+pub struct CreateExamInput {
+    pub term_id: String,
+    pub subject_id: String,
+    pub exam_type: String,
+    pub class_level: String,
+    pub exam_date: String,
+    pub title: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertExamGradeInput {
+    pub exam_id: String,
+    pub santri_id: String,
+    pub score: f64,
+    pub teacher_note: Option<String>,
+}
+
+pub async fn create_exam_session(
+    state: &AppState,
+    actor: &CurrentUser,
+    input: CreateExamInput,
+) -> Result<ExamView, AppError> {
+    actor.require_admin_or_asatidz()?;
+    let clean_date = validate_iso_date(&input.exam_date)?;
+
+    if !matches!(
+        input.exam_type.as_str(),
+        "HARIAN" | "UTS" | "UAS" | "SYAFAHI_LISAN"
+    ) {
+        return Err(AppError::BadRequest("Jenis ujian tidak valid".into()));
+    }
+    if input.title.trim().is_empty() || input.class_level.trim().is_empty() {
+        return Err(AppError::BadRequest("Judul ujian dan tingkat kelas wajib diisi".into()));
+    }
+
+    let id = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO exams (id, term_id, subject_id, exam_type, class_level, exam_date, examiner_id, title)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+    )
+    .bind(&id)
+    .bind(&input.term_id)
+    .bind(&input.subject_id)
+    .bind(&input.exam_type)
+    .bind(input.class_level.trim())
+    .bind(&clean_date)
+    .bind(&actor.id)
+    .bind(input.title.trim())
+    .execute(&state.db)
+    .await?;
+
+    let view: ExamView = sqlx::query_as(
+        "SELECT e.id, e.term_id, t.term_name, e.subject_id, sub.code AS subject_code,
+                sub.name AS subject_name, sub.category AS subject_category, sub.kkm_score,
+                e.exam_type, e.class_level, e.exam_date, e.examiner_id,
+                u.full_name AS examiner_name, e.title,
+                (SELECT COUNT(*) FROM exam_grades g WHERE g.exam_id = e.id) AS graded_count,
+                e.created_at
+         FROM exams e
+         JOIN academic_terms t ON t.id = e.term_id
+         JOIN subjects sub ON sub.id = e.subject_id
+         JOIN users u ON u.id = e.examiner_id
+         WHERE e.id = ?1"
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(view)
+}
+
+pub async fn upsert_exam_grade(
+    state: &AppState,
+    actor: &CurrentUser,
+    input: UpsertExamGradeInput,
+) -> Result<ExamGradeView, AppError> {
+    actor.require_admin_or_asatidz()?;
+
+    if input.score.is_nan() || !(0.0..=100.0).contains(&input.score) {
+        return Err(AppError::BadRequest(
+            "Nilai ujian harus berada pada rentang 0.0 hingga 100.0".into(),
+        ));
+    }
+
+    let wali_phone: Option<String> = sqlx::query_scalar(
+        "SELECT u.phone_number
+         FROM santri s
+         JOIN users u ON u.id = s.primary_wali_id
+         WHERE s.id = ?1 AND s.is_active = 1"
+    )
+    .bind(&input.santri_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let wali_phone = wali_phone.ok_or_else(|| AppError::NotFound("Santri tidak ditemukan".into()))?;
+
+    let (letter_grade, predicate_label) = compute_grade_predicate(input.score);
+    let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let id = uuid::Uuid::now_v7().to_string();
+
+    sqlx::query(
+        "INSERT INTO exam_grades (
+            id, exam_id, santri_id, score, letter_grade, predicate_label,
+            teacher_note, recorded_by_id, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(exam_id, santri_id) DO UPDATE SET
+            score = excluded.score,
+            letter_grade = excluded.letter_grade,
+            predicate_label = excluded.predicate_label,
+            teacher_note = excluded.teacher_note,
+            recorded_by_id = excluded.recorded_by_id,
+            updated_at = excluded.updated_at"
+    )
+    .bind(&id)
+    .bind(&input.exam_id)
+    .bind(&input.santri_id)
+    .bind(input.score)
+    .bind(letter_grade)
+    .bind(predicate_label)
+    .bind(input.teacher_note.as_deref().map(str::trim))
+    .bind(&actor.id)
+    .bind(&now_iso)
+    .execute(&state.db)
+    .await?;
+
+    let view: ExamGradeView = sqlx::query_as(
+        "SELECT g.id, g.exam_id, e.title AS exam_title, e.exam_type, e.exam_date,
+                e.term_id, t.term_name, e.subject_id, sub.code AS subject_code,
+                sub.name AS subject_name, sub.category AS subject_category, sub.kkm_score,
+                g.santri_id, s.full_name AS santri_name, s.nis AS santri_nis,
+                g.score, g.letter_grade, g.predicate_label, g.teacher_note,
+                u.full_name AS recorded_by_name, g.updated_at
+         FROM exam_grades g
+         JOIN exams e ON e.id = g.exam_id
+         JOIN academic_terms t ON t.id = e.term_id
+         JOIN subjects sub ON sub.id = e.subject_id
+         JOIN santri s ON s.id = g.santri_id
+         JOIN users u ON u.id = g.recorded_by_id
+         WHERE g.exam_id = ?1 AND g.santri_id = ?2"
+    )
+    .bind(&input.exam_id)
+    .bind(&input.santri_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let wa_msg = format!(
+        "Hasil Evaluasi Akademik {}: {} ({}) memperoleh nilai {:.1} [{} - {}].",
+        view.santri_name,
+        view.subject_name,
+        view.exam_type,
+        view.score,
+        view.letter_grade,
+        view.predicate_label
+    );
+    state
+        .notifier
+        .notify_wali(None, &wali_phone, "RAPOR_PUBLISHED", &wa_msg)
+        .await;
+
+    Ok(view)
+}
+
+fn format_opt_score(opt: Option<f64>) -> String {
+    match opt {
+        Some(v) => format!("{:.1}", v),
+        None => "-".to_string(),
+    }
+}
+
+/// Menghasilkan rekap tabel Rapor Digital per santri untuk semester tertentu
+pub async fn build_santri_rapor_rows(
+    db: &sqlx::SqlitePool,
+    santri_id: &str,
+    term_id: &str,
+) -> Result<Vec<RaporSubjectRow>, AppError> {
+    let subjects: Vec<Subject> = sqlx::query_as(
+        "SELECT id, code, name, category, kkm_score, is_active, created_at
+         FROM subjects
+         WHERE is_active = 1
+         ORDER BY category ASC, code ASC"
+    )
+    .fetch_all(db)
+    .await?;
+
+    let grades: Vec<ExamGradeView> = sqlx::query_as(
+        "SELECT g.id, g.exam_id, e.title AS exam_title, e.exam_type, e.exam_date,
+                e.term_id, t.term_name, e.subject_id, sub.code AS subject_code,
+                sub.name AS subject_name, sub.category AS subject_category, sub.kkm_score,
+                g.santri_id, s.full_name AS santri_name, s.nis AS santri_nis,
+                g.score, g.letter_grade, g.predicate_label, g.teacher_note,
+                u.full_name AS recorded_by_name, g.updated_at
+         FROM exam_grades g
+         JOIN exams e ON e.id = g.exam_id
+         JOIN academic_terms t ON t.id = e.term_id
+         JOIN subjects sub ON sub.id = e.subject_id
+         JOIN santri s ON s.id = g.santri_id
+         JOIN users u ON u.id = g.recorded_by_id
+         WHERE g.santri_id = ?1 AND e.term_id = ?2
+         ORDER BY e.exam_date DESC"
+    )
+    .bind(santri_id)
+    .bind(term_id)
+    .fetch_all(db)
+    .await?;
+
+    let mut rows = Vec::with_capacity(subjects.len());
+    for sub in subjects {
+        let sub_grades: Vec<&ExamGradeView> = grades
+            .iter()
+            .filter(|g| g.subject_id == sub.id)
+            .collect();
+
+        let find_avg = |etype: &str| -> Option<f64> {
+            let vals: Vec<f64> = sub_grades
+                .iter()
+                .filter(|g| g.exam_type == etype)
+                .map(|g| g.score)
+                .collect();
+            if vals.is_empty() {
+                None
+            } else {
+                let sum: f64 = vals.iter().sum();
+                Some(((sum / vals.len() as f64) * 10.0).round() / 10.0)
+            }
+        };
+
+        let harian_score = find_avg("HARIAN");
+        let uts_score = find_avg("UTS");
+        let uas_score = find_avg("UAS");
+        let syafahi_score = find_avg("SYAFAHI_LISAN");
+
+        let present_components: Vec<f64> = [harian_score, uts_score, uas_score, syafahi_score]
+            .into_iter()
+            .flatten()
+            .collect();
+
+        let final_score = if present_components.is_empty() {
+            0.0
+        } else {
+            let sum: f64 = present_components.iter().sum();
+            ((sum / present_components.len() as f64) * 10.0).round() / 10.0
+        };
+
+        let (letter, pred, final_display) = if present_components.is_empty() {
+            ("-", "Belum Dinilai", "-".to_string())
+        } else {
+            let (l, p) = compute_grade_predicate(final_score);
+            (l, p, format!("{:.1}", final_score))
+        };
+
+        rows.push(RaporSubjectRow {
+            subject_code: sub.code,
+            subject_name: sub.name,
+            category: sub.category,
+            kkm_score: sub.kkm_score,
+            harian_score,
+            uts_score,
+            uas_score,
+            syafahi_score,
+            harian_display: format_opt_score(harian_score),
+            uts_display: format_opt_score(uts_score),
+            uas_display: format_opt_score(uas_score),
+            syafahi_display: format_opt_score(syafahi_score),
+            final_score,
+            final_display,
+            letter_grade: letter.to_string(),
+            predicate_label: pred.to_string(),
+            passed_kkm: !present_components.is_empty() && final_score >= sub.kkm_score as f64,
+        });
+    }
+
+    Ok(rows)
+}
+```
+
+## 4. Implementasi Handler Route (`src/routes/academic_api.rs`)
+
+```rust
+use axum::{
+    extract::{Form, State},
+    http::{header::HeaderName, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+
+use crate::{
+    auth::CurrentUser,
+    error::AppError,
+    services::academic_service::{
+        create_exam_session, upsert_exam_grade, CreateExamInput, UpsertExamGradeInput,
+    },
+    AppState,
+};
+
+pub async fn handle_create_exam(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(input): Form<CreateExamInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let exam = create_exam_session(&state, &user, input).await?;
+    Ok((
+        StatusCode::CREATED,
+        [(HeaderName::from_static("hx-trigger"), "dataChanged")],
+        Json(exam),
+    ))
+}
+
+pub async fn handle_upsert_grade(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(input): Form<UpsertExamGradeInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let grade = upsert_exam_grade(&state, &user, input).await?;
+    Ok((
+        StatusCode::OK,
+        [(HeaderName::from_static("hx-trigger"), "dataChanged")],
+        Json(grade),
+    ))
+}
+```
+
+## 5. Checklist Verifikasi Modul 07
+
+* [ ] `create_exam_session` memvalidasi `exam_date` menggunakan `validate_iso_date`.
+* [ ] `build_santri_rapor_rows` mengisi `harian_display`, `uts_display`, `uas_display`, `syafahi_display`, dan `final_display` bertipe `String` untuk Askama.
+
+
+==================== END OF DOCUMENT: MOD_07_EXAMS_GRADES_AND_RAPOR.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_08_FRONTEND_ANTISLOP_VIEWS.md ====================
+
+# Modul 08 — Anti-Slop Frontend Views, HTMX Wiring & Client-Side Compressor (`MOD_08_FRONTEND_ANTISLOP_VIEWS.md`)
+
+Modul ini merinci seluruh tampilan SSR `Askama` (menggunakan pembungkus `HtmlTemplate<T>`), interaksi `HTMX`, *state* `Alpine.js`, kompresor WebP foto pertemuan, dan klien SSE dengan mematuhi penuh panduan desain **`03_MASTER_DESIGN_AND_ANTISLOP.md` (`DESIGN.md`)**.
+
+## 1. Scope & File Ownership
+
+* `src/routes/views.rs`
+* `templates/layout.html`
+* `templates/login.html`
+* `templates/public_flow.html`
+* `templates/wali_dashboard.html`
+* `templates/asatidz_dashboard.html`
+* `templates/admin_dashboard.html`
+* `templates/musyrif_board.html`
+* `static/js/photo-compressor.js`
+* `static/js/sse-client.js`
+
+## 2. Aturan Anti-Slop & Root-Cause Guardrails Modul 08
+
+1. **Use `HtmlTemplate<T>` Wrapper**: Seluruh handler view mengembalikan `Result<HtmlTemplate<...>, AppError>` (atau `HtmlTemplate(LoginTemplate { ... }).into_response()`), sehingga bebas dari konflik crate `askama_axum`.
+2. **Never Render Raw `Option<T>` in Askama HTML**: Di dalam file `templates/*.html`, dilarang menulis `{{ visit.scheduled_start }}`, `{{ visit.meeting_spot }}`, atau `{{ row.harian_score }}` secara mentah karena `Option<T>` tidak mengimplementasikan `Display`. Wajib memanggil metode helper Askama-safe yang sudah ada di `src/models.rs`:
+   * `{{ visit.schedule_window_display() }}`
+   * `{{ visit.spot_display() }}`
+   * `{{ visit.titipan_display() }}`
+   * `{{ visit.meeting_notes_display() }}`
+   * `{{ log.notes_display() }}`
+   * `{{ grade.teacher_note_display() }}`
+   * `{{ att.note_display() }}`
+   * `{{ row.harian_display }}`, `{{ row.uts_display }}`, `{{ row.uas_display }}`, `{{ row.syafahi_display }}`, `{{ row.final_display }}`
+3. **Mandatory Official Pondok Logo**: Seluruh halaman wajib me-render `<img src="{{ logo_url }}" ... />` yang bersumber dari konstanta `PONDOK_LOGO_URL`.
+
+## 3. Implementasi Lengkap `src/routes/views.rs`
+
+```rust
+use askama::Template;
+use axum::{
+    extract::{Path, Query, State},
+    response::{IntoResponse, Redirect},
+};
+use chrono::Utc;
+use serde::Deserialize;
+
+use crate::{
+    auth::CurrentUser,
+    config::PONDOK_LOGO_URL,
+    error::{AppError, HtmlTemplate},
+    models::{
+        AcademicTerm, AttendanceLogView, Dormitory, ExamGradeView, ExamView,
+        PublicFlowItemView, RaporSubjectRow, Santri, SantriNoteView, Subject,
+        TahfidzLogView, UserRole, VisitDetailView, VisitStatusLog,
+    },
+    services::{
+        academic_service::build_santri_rapor_rows,
+        tahfidz_service::SELECT_TAHFIDZ_LOG_SQL,
+        visit_service::SELECT_VISIT_DETAIL_SQL,
+    },
+    AppState,
+};
+
+#[derive(Debug, Deserialize)]
+pub struct DateFilterQuery {
+    pub date: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WaliFilterQuery {
+    pub santri_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DormBoardQuery {
+    pub dorm_id: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "login.html")]
+pub struct LoginTemplate {
+    pub logo_url: &'static str,
+    pub error_message: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "public_flow.html")]
+pub struct PublicFlowTemplate {
+    pub logo_url: &'static str,
+    pub filter_date: String,
+    pub items: Vec<PublicFlowItemView>,
+    pub selected_ticket: Option<PublicFlowItemView>,
+    pub selected_logs: Vec<VisitStatusLog>,
+}
+
+#[derive(Template)]
+#[template(path = "wali_dashboard.html")]
+pub struct WaliDashboardTemplate {
+    pub logo_url: &'static str,
+    pub user_name: String,
+    pub santri_list: Vec<Santri>,
+    pub active_santri: Santri,
+    pub active_term: AcademicTerm,
+    pub active_visits: Vec<VisitDetailView>,
+    pub completed_logbooks: Vec<VisitDetailView>,
+    pub tahfidz_logs: Vec<TahfidzLogView>,
+    pub rapor_rows: Vec<RaporSubjectRow>,
+    pub exam_grades: Vec<ExamGradeView>,
+    pub attendance_logs: Vec<AttendanceLogView>,
+    pub santri_notes: Vec<SantriNoteView>,
+    pub hadir_count: usize,
+    pub sakit_izin_count: usize,
+}
+
+#[derive(Template)]
+#[template(path = "asatidz_dashboard.html")]
+pub struct AsatidzDashboardTemplate {
+    pub logo_url: &'static str,
+    pub user_name: String,
+    pub today_date: String,
+    pub active_term: AcademicTerm,
+    pub santri_list: Vec<Santri>,
+    pub subjects: Vec<Subject>,
+    pub exams: Vec<ExamView>,
+    pub recent_tahfidz: Vec<TahfidzLogView>,
+    pub recent_grades: Vec<ExamGradeView>,
+}
+
+#[derive(Template)]
+#[template(path = "admin_dashboard.html")]
+pub struct AdminDashboardTemplate {
+    pub logo_url: &'static str,
+    pub user_name: String,
+    pub filter_date: String,
+    pub filter_status: String,
+    pub visits: Vec<VisitDetailView>,
+    pub santri_count: i64,
+    pub tahfidz_total_count: i64,
+    pub exam_total_count: i64,
+}
+
+#[derive(Template)]
+#[template(path = "musyrif_board.html")]
+pub struct MusyrifBoardTemplate {
+    pub logo_url: &'static str,
+    pub user_name: String,
+    pub today_date: String,
+    pub is_admin: bool,
+    pub current_dorm: Dormitory,
+    pub all_dorms: Vec<Dormitory>,
+    pub dorm_santri: Vec<Santri>,
+    pub called_visits: Vec<VisitDetailView>,
+    pub confirmed_visits: Vec<VisitDetailView>,
+    pub recent_attendance: Vec<AttendanceLogView>,
+    pub recent_notes: Vec<SantriNoteView>,
+}
+
+async fn fetch_active_term(db: &sqlx::SqlitePool) -> Result<AcademicTerm, AppError> {
+    sqlx::query_as::<_, AcademicTerm>(
+        "SELECT id, term_name, academic_year, semester_label, is_active, created_at
+         FROM academic_terms
+         WHERE is_active = 1
+         ORDER BY created_at DESC LIMIT 1"
+    )
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Periode semester aktif belum diatur".into()))
+}
+
+pub async fn root_redirect(user: Option<CurrentUser>) -> Redirect {
+    match user {
+        Some(u) => Redirect::to(u.home_redirect_path()),
+        None => Redirect::to("/alur"),
+    }
+}
+
+pub async fn login_page(user: Option<CurrentUser>) -> impl IntoResponse {
+    if let Some(u) = user {
+        return Redirect::to(u.home_redirect_path()).into_response();
+    }
+    HtmlTemplate(LoginTemplate {
+        logo_url: PONDOK_LOGO_URL,
+        error_message: None,
+    })
+    .into_response()
+}
+
+pub async fn public_flow_page(
+    State(state): State<AppState>,
+    Query(query): Query<DateFilterQuery>,
+) -> Result<HtmlTemplate<PublicFlowTemplate>, AppError> {
+    let filter_date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+
+    let sql = format!(
+        "{} WHERE v.requested_date = ?1 ORDER BY v.updated_at DESC",
+        SELECT_VISIT_DETAIL_SQL
+    );
+    let rows: Vec<VisitDetailView> = sqlx::query_as(&sql)
+        .bind(&filter_date)
+        .fetch_all(&state.db)
+        .await?;
+
+    let items = rows.iter().map(PublicFlowItemView::from).collect();
+
+    Ok(HtmlTemplate(PublicFlowTemplate {
+        logo_url: PONDOK_LOGO_URL,
+        filter_date,
+        items,
+        selected_ticket: None,
+        selected_logs: Vec::new(),
+    }))
+}
+
+pub async fn public_flow_ticket_page(
+    State(state): State<AppState>,
+    Path(ticket_code): Path<String>,
+) -> Result<HtmlTemplate<PublicFlowTemplate>, AppError> {
+    let sql = format!("{} WHERE v.ticket_code = ?1", SELECT_VISIT_DETAIL_SQL);
+    let detail: VisitDetailView = sqlx::query_as(&sql)
+        .bind(&ticket_code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Kode tiket tidak ditemukan".into()))?;
+
+    let selected_ticket = PublicFlowItemView::from(&detail);
+    let selected_logs: Vec<VisitStatusLog> = sqlx::query_as(
+        "SELECT id, visit_id, from_status, to_status, actor_id, public_note, created_at
+         FROM visit_status_logs
+         WHERE visit_id = ?1
+         ORDER BY id ASC"
+    )
+    .bind(&detail.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let list_sql = format!(
+        "{} WHERE v.requested_date = ?1 ORDER BY v.updated_at DESC",
+        SELECT_VISIT_DETAIL_SQL
+    );
+    let rows: Vec<VisitDetailView> = sqlx::query_as(&list_sql)
+        .bind(&detail.requested_date)
+        .fetch_all(&state.db)
+        .await?;
+    let items = rows.iter().map(PublicFlowItemView::from).collect();
+
+    Ok(HtmlTemplate(PublicFlowTemplate {
+        logo_url: PONDOK_LOGO_URL,
+        filter_date: detail.requested_date,
+        items,
+        selected_ticket: Some(selected_ticket),
+        selected_logs,
+    }))
+}
+
+pub async fn wali_dashboard_page(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WaliFilterQuery>,
+) -> Result<HtmlTemplate<WaliDashboardTemplate>, AppError> {
+    user.require_role(UserRole::Wali)?;
+
+    let santri_list: Vec<Santri> = sqlx::query_as(
+        "SELECT id, nis, full_name, class_level, dormitory_id, room_name, primary_wali_id,
+                total_juz_memorized, current_surah_focus, is_active, created_at
+         FROM santri
+         WHERE primary_wali_id = ?1 AND is_active = 1
+         ORDER BY full_name ASC"
+    )
+    .bind(&user.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let active_santri = if let Some(ref req_id) = query.santri_id {
+        santri_list
+            .iter()
+            .find(|s| &s.id == req_id)
+            .cloned()
+            .ok_or(AppError::Forbidden)?
+    } else {
+        santri_list
+            .first()
+            .cloned()
+            .ok_or_else(|| AppError::NotFound("Belum ada data santri terdaftar".into()))?
+    };
+
+    let active_term = fetch_active_term(&state.db).await?;
+
+    let visit_sql = format!(
+        "{} WHERE v.wali_id = ?1 AND v.santri_id = ?2 ORDER BY v.created_at DESC",
+        SELECT_VISIT_DETAIL_SQL
+    );
+    let all_visits: Vec<VisitDetailView> = sqlx::query_as(&visit_sql)
+        .bind(&user.id)
+        .bind(&active_santri.id)
+        .fetch_all(&state.db)
+        .await?;
+
+    let (completed_logbooks, active_visits): (Vec<_>, Vec<_>) = all_visits
+        .into_iter()
+        .partition(|v| v.current_status == "COMPLETED");
+
+    let tahfidz_sql = format!(
+        "{} WHERE t.santri_id = ?1 ORDER BY t.session_date DESC, t.created_at DESC LIMIT 50",
+        SELECT_TAHFIDZ_LOG_SQL
+    );
+    let tahfidz_logs: Vec<TahfidzLogView> = sqlx::query_as(&tahfidz_sql)
+        .bind(&active_santri.id)
+        .fetch_all(&state.db)
+        .await?;
+
+    let rapor_rows = build_santri_rapor_rows(&state.db, &active_santri.id, &active_term.id).await?;
+
+    let exam_grades: Vec<ExamGradeView> = sqlx::query_as(
+        "SELECT g.id, g.exam_id, e.title AS exam_title, e.exam_type, e.exam_date,
+                e.term_id, t.term_name, e.subject_id, sub.code AS subject_code,
+                sub.name AS subject_name, sub.category AS subject_category, sub.kkm_score,
+                g.santri_id, s.full_name AS santri_name, s.nis AS santri_nis,
+                g.score, g.letter_grade, g.predicate_label, g.teacher_note,
+                u.full_name AS recorded_by_name, g.updated_at
+         FROM exam_grades g
+         JOIN exams e ON e.id = g.exam_id
+         JOIN academic_terms t ON t.id = e.term_id
+         JOIN subjects sub ON sub.id = e.subject_id
+         JOIN santri s ON s.id = g.santri_id
+         JOIN users u ON u.id = g.recorded_by_id
+         WHERE g.santri_id = ?1
+         ORDER BY e.exam_date DESC LIMIT 50"
+    )
+    .bind(&active_santri.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let attendance_logs: Vec<AttendanceLogView> = sqlx::query_as(
+        "SELECT a.id, a.santri_id, s.full_name AS santri_name, a.attendance_date,
+                a.activity_type, a.status, a.note, u.full_name AS recorded_by_name, a.created_at
+         FROM attendance_logs a
+         JOIN santri s ON s.id = a.santri_id
+         JOIN users u ON u.id = a.recorded_by_id
+         WHERE a.santri_id = ?1
+         ORDER BY a.attendance_date DESC LIMIT 60"
+    )
+    .bind(&active_santri.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let hadir_count = attendance_logs.iter().filter(|a| a.status == "HADIR").count();
+    let sakit_izin_count = attendance_logs
+        .iter()
+        .filter(|a| a.status == "SAKIT" || a.status == "IZIN")
+        .count();
+
+    let santri_notes: Vec<SantriNoteView> = sqlx::query_as(
+        "SELECT n.id, n.santri_id, s.full_name AS santri_name, n.note_date,
+                n.category, n.title, n.description, u.full_name AS recorded_by_name, n.created_at
+         FROM santri_notes n
+         JOIN santri s ON s.id = n.santri_id
+         JOIN users u ON u.id = n.recorded_by_id
+         WHERE n.santri_id = ?1
+         ORDER BY n.note_date DESC LIMIT 30"
+    )
+    .bind(&active_santri.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(HtmlTemplate(WaliDashboardTemplate {
+        logo_url: PONDOK_LOGO_URL,
+        user_name: user.full_name,
+        santri_list,
+        active_santri,
+        active_term,
+        active_visits,
+        completed_logbooks,
+        tahfidz_logs,
+        rapor_rows,
+        exam_grades,
+        attendance_logs,
+        santri_notes,
+        hadir_count,
+        sakit_izin_count,
+    }))
+}
+
+pub async fn asatidz_dashboard_page(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<HtmlTemplate<AsatidzDashboardTemplate>, AppError> {
+    user.require_admin_or_asatidz()?;
+
+    let today_date = Utc::now().format("%Y-%m-%d").to_string();
+    let active_term = fetch_active_term(&state.db).await?;
+
+    let santri_list: Vec<Santri> = sqlx::query_as(
+        "SELECT id, nis, full_name, class_level, dormitory_id, room_name, primary_wali_id,
+                total_juz_memorized, current_surah_focus, is_active, created_at
+         FROM santri WHERE is_active = 1 ORDER BY full_name ASC"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let subjects: Vec<Subject> = sqlx::query_as(
+        "SELECT id, code, name, category, kkm_score, is_active, created_at
+         FROM subjects WHERE is_active = 1 ORDER BY category ASC, code ASC"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let exams: Vec<ExamView> = sqlx::query_as(
+        "SELECT e.id, e.term_id, t.term_name, e.subject_id, sub.code AS subject_code,
+                sub.name AS subject_name, sub.category AS subject_category, sub.kkm_score,
+                e.exam_type, e.class_level, e.exam_date, e.examiner_id,
+                u.full_name AS examiner_name, e.title,
+                (SELECT COUNT(*) FROM exam_grades g WHERE g.exam_id = e.id) AS graded_count,
+                e.created_at
+         FROM exams e
+         JOIN academic_terms t ON t.id = e.term_id
+         JOIN subjects sub ON sub.id = e.subject_id
+         JOIN users u ON u.id = e.examiner_id
+         ORDER BY e.exam_date DESC LIMIT 30"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let tahfidz_sql = format!(
+        "{} ORDER BY t.session_date DESC, t.created_at DESC LIMIT 25",
+        SELECT_TAHFIDZ_LOG_SQL
+    );
+    let recent_tahfidz: Vec<TahfidzLogView> = sqlx::query_as(&tahfidz_sql)
+        .fetch_all(&state.db)
+        .await?;
+
+    let recent_grades: Vec<ExamGradeView> = sqlx::query_as(
+        "SELECT g.id, g.exam_id, e.title AS exam_title, e.exam_type, e.exam_date,
+                e.term_id, t.term_name, e.subject_id, sub.code AS subject_code,
+                sub.name AS subject_name, sub.category AS subject_category, sub.kkm_score,
+                g.santri_id, s.full_name AS santri_name, s.nis AS santri_nis,
+                g.score, g.letter_grade, g.predicate_label, g.teacher_note,
+                u.full_name AS recorded_by_name, g.updated_at
+         FROM exam_grades g
+         JOIN exams e ON e.id = g.exam_id
+         JOIN academic_terms t ON t.id = e.term_id
+         JOIN subjects sub ON sub.id = e.subject_id
+         JOIN santri s ON s.id = g.santri_id
+         JOIN users u ON u.id = g.recorded_by_id
+         ORDER BY g.updated_at DESC LIMIT 25"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(HtmlTemplate(AsatidzDashboardTemplate {
+        logo_url: PONDOK_LOGO_URL,
+        user_name: user.full_name,
+        today_date,
+        active_term,
+        santri_list,
+        subjects,
+        exams,
+        recent_tahfidz,
+        recent_grades,
+    }))
+}
+
+pub async fn admin_dashboard_page(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<DateFilterQuery>,
+) -> Result<HtmlTemplate<AdminDashboardTemplate>, AppError> {
+    user.require_role(UserRole::Admin)?;
+
+    let filter_date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let filter_status = query.status.unwrap_or_else(|| "ALL".to_string());
+
+    let visits: Vec<VisitDetailView> = if filter_status == "ALL" {
+        let sql = format!(
+            "{} WHERE v.requested_date = ?1 ORDER BY v.created_at DESC",
+            SELECT_VISIT_DETAIL_SQL
+        );
+        sqlx::query_as(&sql)
+            .bind(&filter_date)
+            .fetch_all(&state.db)
+            .await?
+    } else {
+        let sql = format!(
+            "{} WHERE v.requested_date = ?1 AND v.current_status = ?2 ORDER BY v.created_at DESC",
+            SELECT_VISIT_DETAIL_SQL
+        );
+        sqlx::query_as(&sql)
+            .bind(&filter_date)
+            .bind(&filter_status)
+            .fetch_all(&state.db)
+            .await?
+    };
+
+    let santri_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM santri WHERE is_active = 1")
+        .fetch_one(&state.db)
+        .await?;
+    let tahfidz_total_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tahfidz_logs")
+        .fetch_one(&state.db)
+        .await?;
+    let exam_total_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM exams")
+        .fetch_one(&state.db)
+        .await?;
+
+    Ok(HtmlTemplate(AdminDashboardTemplate {
+        logo_url: PONDOK_LOGO_URL,
+        user_name: user.full_name,
+        filter_date,
+        filter_status,
+        visits,
+        santri_count,
+        tahfidz_total_count,
+        exam_total_count,
+    }))
+}
+
+pub async fn musyrif_board_page(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<DormBoardQuery>,
+) -> Result<HtmlTemplate<MusyrifBoardTemplate>, AppError> {
+    let today_date = Utc::now().format("%Y-%m-%d").to_string();
+    let all_dorms: Vec<Dormitory> = sqlx::query_as(
+        "SELECT id, name, gender_zone, building_location, created_at
+         FROM dormitories ORDER BY id ASC"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let target_dorm_id = match user.role {
+        UserRole::Musyrif => user.dormitory_id.clone().ok_or(AppError::Forbidden)?,
+        UserRole::Admin => query
+            .dorm_id
+            .or_else(|| all_dorms.first().map(|d| d.id.clone()))
+            .ok_or_else(|| AppError::NotFound("Data asrama belum tersedia".into()))?,
+        _ => return Err(AppError::Forbidden),
+    };
+
+    let current_dorm = all_dorms
+        .iter()
+        .find(|d| d.id == target_dorm_id)
+        .cloned()
+        .ok_or_else(|| AppError::NotFound("Asrama tidak ditemukan".into()))?;
+
+    let dorm_santri: Vec<Santri> = sqlx::query_as(
+        "SELECT id, nis, full_name, class_level, dormitory_id, room_name, primary_wali_id,
+                total_juz_memorized, current_surah_focus, is_active, created_at
+         FROM santri WHERE dormitory_id = ?1 AND is_active = 1 ORDER BY room_name ASC, full_name ASC"
+    )
+    .bind(&target_dorm_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let sql = format!(
+        "{} WHERE s.dormitory_id = ?1 AND v.current_status IN ('SANTRI_CALLED', 'SANTRI_CONFIRMED') ORDER BY v.updated_at DESC",
+        SELECT_VISIT_DETAIL_SQL
+    );
+    let dorm_visits: Vec<VisitDetailView> = sqlx::query_as(&sql)
+        .bind(&target_dorm_id)
+        .fetch_all(&state.db)
+        .await?;
+
+    let (called_visits, confirmed_visits): (Vec<_>, Vec<_>) = dorm_visits
+        .into_iter()
+        .partition(|v| v.current_status == "SANTRI_CALLED");
+
+    let recent_attendance: Vec<AttendanceLogView> = sqlx::query_as(
+        "SELECT a.id, a.santri_id, s.full_name AS santri_name, a.attendance_date,
+                a.activity_type, a.status, a.note, u.full_name AS recorded_by_name, a.created_at
+         FROM attendance_logs a
+         JOIN santri s ON s.id = a.santri_id
+         JOIN users u ON u.id = a.recorded_by_id
+         WHERE s.dormitory_id = ?1
+         ORDER BY a.attendance_date DESC, a.created_at DESC LIMIT 20"
+    )
+    .bind(&target_dorm_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let recent_notes: Vec<SantriNoteView> = sqlx::query_as(
+        "SELECT n.id, n.santri_id, s.full_name AS santri_name, n.note_date,
+                n.category, n.title, n.description, u.full_name AS recorded_by_name, n.created_at
+         FROM santri_notes n
+         JOIN santri s ON s.id = n.santri_id
+         JOIN users u ON u.id = n.recorded_by_id
+         WHERE s.dormitory_id = ?1
+         ORDER BY n.note_date DESC, n.created_at DESC LIMIT 20"
+    )
+    .bind(&target_dorm_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(HtmlTemplate(MusyrifBoardTemplate {
+        logo_url: PONDOK_LOGO_URL,
+        user_name: user.full_name,
+        today_date,
+        is_admin: user.role == UserRole::Admin,
+        current_dorm,
+        all_dorms,
+        dorm_santri,
+        called_visits,
+        confirmed_visits,
+        recent_attendance,
+        recent_notes,
+    }))
+}
+```
+
+## 4. Kontrak Atribut HTMX & Metode Askama-Safe di Template
+
+1. **Header Utama (`templates/layout.html`)**:
+   * Menampilkan `<img src="{{ logo_url }}" alt="Logo Pondok" class="h-10 w-10 rounded-md object-contain bg-white p-0.5 border border-emerald-800/30" />` dengan latar `bg-emerald-950 text-white`.
+2. **Portal Wali Santri (`templates/wali_dashboard.html`)**:
+   * **Tab 1 (`sambang`)**: Gunakan `{{ visit.schedule_window_display() }}`, `{{ visit.spot_display() }}`, `{{ visit.titipan_display() }}`, dan `{{ visit.meeting_notes_display() }}`. Render foto pertemuan menggunakan `<img src="/api/visits/{{ visit.id }}/logbook/photo" />`.
+   * **Tab 2 (`tahfidz`)**: Gunakan `{{ log.notes_display() }}` pada kolom catatan setoran.
+   * **Tab 3 (`rapor`)**: Gunakan `{{ row.harian_display }}`, `{{ row.uts_display }}`, `{{ row.uas_display }}`, `{{ row.syafahi_display }}`, dan `{{ row.final_display }}` pada tabel rapor, serta `{{ grade.teacher_note_display() }}` pada riwayat nilai ujian.
+   * **Tab 4 (`kesantrian`)**: Gunakan `{{ att.note_display() }}` pada tabel kehadiran.
+3. **Papan Alur Pihak Ketiga (`templates/public_flow.html`)**:
+   * Gunakan `{{ item.scheduled_window_display }}` dan `{{ item.meeting_spot_display }}` yang bertipe `String` (bukan `Option<String>`).
+
+## 5. Implementasi Lengkap `static/js/photo-compressor.js` & `static/js/sse-client.js`
+
+### File `static/js/photo-compressor.js`
+```javascript
+async function compressMeetingPhoto(file, maxWidth = 1280, quality = 0.75) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width);
+        width = maxWidth;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) return reject(new Error('Gagal mengompres foto pertemuan'));
+          const compressedFile = new File([blob], 'meeting_logbook.webp', {
+            type: 'image/webp',
+            lastModified: Date.now(),
+          });
+          resolve(compressedFile);
+        },
+        'image/webp',
+        quality
+      );
+    };
+
+    img.onerror = (err) => {
+      URL.revokeObjectURL(objectUrl);
+      reject(err);
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+async function submitCompressedLogbook(event, visitId) {
+  event.preventDefault();
+  const form = event.target;
+  const fileInput = form.querySelector('input[type="file"]');
+  const notesInput = form.querySelector('textarea[name="meeting_notes"]');
+  const submitBtn = form.querySelector('button[type="submit"]');
+
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    alert('Silakan ambil atau pilih foto pertemuan Wali Santri & Santri terlebih dahulu.');
+    return;
+  }
+
+  try {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Mengompres & Mengunggah...';
+
+    const rawFile = fileInput.files[0];
+    const webpFile = await compressMeetingPhoto(rawFile, 1280, 0.75);
+
+    const formData = new FormData();
+    formData.append('photo', webpFile, 'meeting_logbook.webp');
+    if (notesInput && notesInput.value.trim() !== '') {
+      formData.append('meeting_notes', notesInput.value.trim());
+    }
+
+    const response = await fetch(`/api/visits/${visitId}/logbook`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin',
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.message || `Gagal mengunggah logbook (HTTP ${response.status})`);
+    }
+
+    window.location.reload();
+  } catch (err) {
+    alert(err.message || 'Terjadi kesalahan saat menyimpan logbook');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Simpan Logbook & Selesaikan';
+  }
+}
+```
+
+### File `static/js/sse-client.js`
+```javascript
+function playCallChime() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(659.25, now);
+    gain1.gain.setValueAtTime(0.25, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.45);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(523.25, now + 0.25);
+    gain2.gain.setValueAtTime(0.25, now + 0.25);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.25);
+    osc2.stop(now + 0.9);
+  } catch (_) {}
+}
+
+function initDormitorySse(dormId) {
+  if (!dormId) return;
+  const source = new EventSource(`/api/sse/dormitory/${dormId}`);
+
+  source.addEventListener('dormitory_call', () => {
+    playCallChime();
+    setTimeout(() => window.location.reload(), 600);
+  });
+
+  source.addEventListener('dormitory_update', () => {
+    window.location.reload();
+  });
+}
+
+function initPublicFlowSse() {
+  const source = new EventSource('/api/sse/public-flow');
+  source.addEventListener('public_flow_updated', () => {
+    window.location.reload();
+  });
+}
+
+document.body.addEventListener('visitChanged', () => {
+  window.location.reload();
+});
+
+document.body.addEventListener('dataChanged', () => {
+  window.location.reload();
+});
+```
+
+## 6. Checklist Verifikasi Modul 08
+
+* [ ] Semua handler view mengembalikan `HtmlTemplate<...>` tanpa bergantung pada crate `askama_axum`.
+* [ ] `fetch_active_term` menggunakan `.fetch_optional` sehingga tidak pernah memicu `500 Internal Server Error` jika belum ada semester aktif.
+* [ ] Tidak ada ekspresi `{{ ... }}` di template HTML yang merender `Option<T>` secara mentah.
+
+
+==================== END OF DOCUMENT: MOD_08_FRONTEND_ANTISLOP_VIEWS.md ====================
+
+
+
+==================== START OF DOCUMENT: MOD_09_DEPLOY_AND_E2E_TEST.md ====================
+
+# Modul 09 — Full Router Wiring, Self-Hosting Deployment & 4-Pillar E2E QA (`MOD_09_DEPLOY_AND_E2E_TEST.md`)
+
+Modul penutup ini merangkai seluruh 8 modul sebelumnya (`MOD_01` s.d. `MOD_08`) di dalam `src/lib.rs` dan `src/main.rs`, menetapkan konfigurasi *worker threads* untuk server **2 Core / 4 GB RAM**, menyediakan skrip *deployment* (`Dockerfile`, `systemd`, & `backup.sh`), serta pengujian integrasi *end-to-end* lintas 4 pilar non-keuangan (`tests/e2e_flow.rs`).
+
+## 1. Scope & File Ownership
+
+* `src/routes/mod.rs`
+
+* `src/services/mod.rs`
+
+* `src/lib.rs`
+
+* `src/main.rs`
+
+* `tests/e2e_flow.rs`
+
+* `Dockerfile`
+
+* `deploy/sipesantren.service`
+
+* `scripts/backup.sh`
+
+## 2. Aturan Anti-Slop Khusus Modul 09
+
+1. **Zero Unwired Route**: Seluruh 26 endpoint dari Modul 02 hingga Modul 08 wajib terdaftar di `build_app_router` tanpa ada satu pun *dead code* atau *unused handler* warning saat kompilasi.
+
+2. **Real E2E HTTP Integration Test**: Pengujian di `tests/e2e_flow.rs` wajib memanggil `build_app_router(state)` yang sesungguhnya di atas SQLite temp/in-memory dan menguji 12 langkah bisnis secara nyata (bukan *unit test* palsu seperti `assert_eq!(1, 1)`).
+
+## 3. Deklarasi Modul & Router Lengkap (`src/routes/mod.rs`, `src/services/mod.rs`, `src/lib.rs`)
+
+### File `src/routes/mod.rs`
+
+```
+pub mod academic_api;
+pub mod auth_routes;
+pub mod kesantrian_api;
+pub mod logbook_routes;
+pub mod sse_routes;
+pub mod tahfidz_api;
+pub mod views;
+pub mod visit_api;
+
+```
+
+### File `src/services/mod.rs`
+
+```
+pub mod academic_service;
+pub mod kesantrian_service;
+pub mod logbook_service;
+pub mod tahfidz_service;
+pub mod visit_service;
+
+```
+
+### File `src/lib.rs`
+
+```
+pub mod auth;
+pub mod config;
+pub mod db;
+pub mod error;
+pub mod models;
+pub mod notification;
+pub mod routes;
+pub mod seed;
+pub mod services;
+pub mod sse;
+
+use std::{path::PathBuf, sync::Arc};
+use axum::{
+    extract::DefaultBodyLimit,
+    routing::{get, post},
+    Router,
+};
+use sqlx::SqlitePool;
+use tower_http::{
+    compression::CompressionLayer,
+    services::ServeDir,
+    trace::TraceLayer,
+};
+
+use crate::{config::AppConfig, notification::NotificationGateway, sse::SseBroadcaster};
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: SqlitePool,
+    pub config: Arc<AppConfig>,
+    pub sse: Arc<SseBroadcaster>,
+    pub notifier: Arc<dyn NotificationGateway>,
+    pub photo_base_dir: Arc<PathBuf>,
+}
+
+pub fn build_app_router(state: AppState) -> Router {
+    let body_limit = state.config.max_photo_upload_bytes + 65_536;
+
+    Router::new()
+        // HTML SSR Views (Modul 08 - 8 Routes)
+        .route("/", get(routes::views::root_redirect))
+        .route("/login", get(routes::views::login_page))
+        .route("/alur", get(routes::views::public_flow_page))
+        .route("/alur/:ticket_code", get(routes::views::public_flow_ticket_page))
+        .route("/wali", get(routes::views::wali_dashboard_page))
+        .route("/asatidz", get(routes::views::asatidz_dashboard_page))
+        .route("/admin", get(routes::views::admin_dashboard_page))
+        .route("/musyrif/board", get(routes::views::musyrif_board_page))
+        // Auth Routes (Modul 02 - 2 Routes)
+        .route("/auth/login", post(routes::auth_routes::handle_login))
+        .route("/auth/logout", post(routes::auth_routes::handle_logout))
+        // Pillar 1: Sambang & Titipan State Machine API (Modul 03 - 6 Routes)
+        .route("/api/visits", post(routes::visit_api::handle_create_visit))
+        .route("/api/visits/:id/schedule", post(routes::visit_api::handle_schedule_visit))
+        .route("/api/visits/:id/wali-confirm", post(routes::visit_api::handle_wali_confirm))
+        .route("/api/visits/:id/call-santri", post(routes::visit_api::handle_call_santri))
+        .route("/api/visits/:id/musyrif-confirm", post(routes::visit_api::handle_musyrif_confirm))
+        .route("/api/visits/:id/cancel", post(routes::visit_api::handle_cancel_visit))
+        // Pillar 1: Logbook & Protected Photo API (Modul 05 - 2 Routes)
+        .route("/api/visits/:id/logbook", post(routes::logbook_routes::handle_upload_logbook))
+        .route("/api/visits/:id/logbook/photo", get(routes::logbook_routes::get_protected_logbook_photo))
+        // Pillar 2: Tahfidz & Mutun Tracker API (Modul 06 - 1 Route)
+        .route("/api/tahfidz", post(routes::tahfidz_api::handle_record_tahfidz))
+        // Pillar 3: Exams, Grades & Rapor API (Modul 07 - 2 Routes)
+        .route("/api/exams", post(routes::academic_api::handle_create_exam))
+        .route("/api/exams/grades", post(routes::academic_api::handle_upsert_grade))
+        // Pillar 4: Attendance & Kesantrian Notes API (Modul 06 - 2 Routes)
+        .route("/api/attendance", post(routes::kesantrian_api::handle_upsert_attendance))
+        .route("/api/santri-notes", post(routes::kesantrian_api::handle_create_santri_note))
+        // Real-Time SSE Streams (Modul 04 - 2 Routes)
+        .route("/api/sse/dormitory/:dorm_id", get(routes::sse_routes::sse_dormitory_stream))
+        .route("/api/sse/public-flow", get(routes::sse_routes::sse_public_flow_stream))
+        // Healthcheck (1 Route)
+        .route("/healthz", get(|| async { "OK" }))
+        // Static assets (CSS/JS saja, foto logbook TIDAK ada di sini)
+        .nest_service("/static", ServeDir::new("./static"))
+        .layer(DefaultBodyLimit::max(body_limit))
+        .layer(CompressionLayer::new())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+```
+
+### File `src/main.rs` (Tuning Worker Threads untuk 2 Core)
+
+```
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use sipesantren::{
+    build_app_router,
+    config::AppConfig,
+    db::init_db_pool,
+    notification::ConfigurableWaGateway,
+    seed::seed_initial_data,
+    sse::SseBroadcaster,
+    AppState,
+};
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "sipesantren=info,tower_http=info".into()),
+        )
+        .init();
+
+    let config = AppConfig::from_env();
+    tokio::fs::create_dir_all(&config.photo_storage_dir).await?;
+
+    let db = init_db_pool(&config.database_url).await?;
+    if config.seed_on_startup {
+        seed_initial_data(&db).await?;
+    }
+
+    let sse = Arc::new(SseBroadcaster::new());
+    let notifier = Arc::new(ConfigurableWaGateway::new(db.clone(), &config));
+    let photo_base_dir = Arc::new(PathBuf::from(&config.photo_storage_dir));
+
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
+    let state = AppState {
+        db,
+        config: Arc::new(config),
+        sse,
+        notifier,
+        photo_base_dir,
+    };
+
+    let app = build_app_router(state);
+    tracing::info!("SiPesantren server listening on http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+```
+
+## 4. Spesifikasi Skenario 12-Step E2E Automated Test (`tests/e2e_flow.rs`)
+
+Agen wajib membuat pengujian integrasi otomatis di `tests/e2e_flow.rs` yang memverifikasi ke-4 pilar non-keuangan sekaligus mengaudit keamanan RBAC:
+
+ 1. **Step 1 (Login 4 Peran)**: Login sebagai `WALI` (`081234567801`), `ADMIN` (`08110000001`), `MUSYRIF` Putra (`08110000002`), dan `ASATIDZ` (`08110000004`). Simpan cookie sesi masing-masing.
+
+ 2. **Step 2 (Pilar 1 — Wali Request Sambang + Titipan)**: `WALI` mengirim `POST /api/visits` untuk `santri-01` dengan `has_titipan=true` dan `titipan_description=Kurma Ajwa & kitab kuning`. Pastikan status `REQUESTED`.
+
+ 3. **Step 3 (Pilar 1 — Admin Jadwalkan)**: `ADMIN` mengirim `POST /api/visits/:id/schedule` (`09:00`–`09:45`, `"Gazebo Putra 01"`). Pastikan status `SCHEDULED`.
+
+ 4. **Step 4 (Pilar 1 — Wali Konfirmasi Jadwal)**: `WALI` mengirim `POST /api/visits/:id/wali-confirm`. Pastikan status `CONFIRMED_BY_WALI`.
+
+ 5. **Step 5 (Pilar 1 — Admin Panggil Santri ke Asrama)**: `ADMIN` mengirim `POST /api/visits/:id/call-santri`. Pastikan status `SANTRI_CALLED`.
+
+ 6. **Step 6 (Pilar 1 — Musyrif Konfirmasi Santri & Titipan)**: `MUSYRIF` mengirim `POST /api/visits/:id/musyrif-confirm`. Pastikan status `SANTRI_CONFIRMED`, `santri_notified_by_musyrif == 1`, dan `titipan_confirmed_to_wali == 1`.
+
+ 7. **Step 7 (Pilar 1 — Admin Upload Foto Pertemuan Logbook)**: `ADMIN` mengirim `POST /api/visits/:id/logbook` berisi gambar WebP valid. Pastikan status `COMPLETED`.
+
+ 8. **Step 8 (Pilar 1 — Audit Privasi Foto Pertemuan)**:
+
+    * `GET /api/visits/:id/logbook/photo` oleh `WALI` pemilik & `ADMIN` -> **`200 OK` (`image/webp`)**.
+
+    * `GET /api/visits/:id/logbook/photo` oleh `MUSYRIF`, `ASATIDZ`, dan `WALI` lain (`081234567802`) -> **`403 Forbidden`**.
+
+    * `GET /api/visits/:id/logbook/photo` tanpa cookie (Pihak Ketiga) -> **`401 Unauthorized`**.
+
+ 9. **Step 9 (Pilar 2 — Asatidz Input Setoran Tahfidz & Update Juz)**: `ASATIDZ` mengirim `POST /api/tahfidz` untuk `santri-01` (`log_type=ZIYADAH`, `juz_number=6`, `surah_or_kitab=QS. Al-Maidah`, `ayah_or_bait_start=16`, `ayah_or_bait_end=35`, `predicate=MUMTAZ`, `score_numeric=95`, `update_total_juz=6`). Pastikan berhasil (`201 Created`) dan `total_juz_memorized` naik menjadi `6`.
+
+10. **Step 10 (Pilar 3 — Asatidz Buat Sesi Ujian & Input Nilai Rapor)**: `ASATIDZ` mengirim `POST /api/exams` (`term_id=term-2026-ganjil`, `subject_id=subj-fiqih`, `exam_type=UAS`) lalu mengirim `POST /api/exams/grades` (`score=92.0`). Pastikan `letter_grade == "A"` dan `predicate_label == "Mumtaz (Istimewa)"`.
+
+11. **Step 11 (Pilar 4 — Musyrif Input Absensi & Catatan Kesantrian)**: `MUSYRIF` mengirim `POST /api/attendance` (`activity_type=ASRAMA_MALAM`, `status=HADIR`) dan `POST /api/santri-notes` (`category=PRESTASI`). Pastikan tersimpan dan terlihat di `/wali`.
+
+12. **Step 12 (Audit Branding & Anti-Slop View)**: `GET /wali` oleh `WALI` dan `GET /login` tanpa cookie wajib memuat URL logo resmi `PONDOK_LOGO_URL` dan menampilkan data Tahfidz, Nilai Rapor, serta Logbook secara lengkap.
+
+## 5. Konfigurasi Self-Hosting untuk VPS 2 Core / 4 GB RAM
+
+### 5.1 Multi-Stage `Dockerfile`
+
+```
+FROM rust:1.82-bookworm AS builder
+WORKDIR /app
+COPY Cargo.toml ./
+COPY migrations ./migrations
+COPY templates ./templates
+COPY src ./src
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates sqlite3 && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/sipesantren
+COPY --from=builder /app/target/release/sipesantren /opt/sipesantren/sipesantren
+COPY static /opt/sipesantren/static
+COPY .env.example /opt/sipesantren/.env
+RUN mkdir -p /opt/sipesantren/data/private_photos
+EXPOSE 3000
+CMD ["/opt/sipesantren/sipesantren"]
+
+```
+
+### 5.2 Systemd Unit (`deploy/sipesantren.service`)
+
+```
+[Unit]
+Description=SiPesantren Non-Financial Integrated Server
+After=network.target
+
+[Service]
+Type=simple
+User=sipesantren
+Group=sipesantren
+WorkingDirectory=/opt/sipesantren
+EnvironmentFile=/opt/sipesantren/.env
+ExecStart=/opt/sipesantren/sipesantren
+Restart=always
+RestartSec=3
+
+# Batas Hardening & Resource untuk VPS 2 Core / 4 GB RAM
+MemoryMax=512M
+CPUQuota=180%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/sipesantren/data
+
+[Install]
+WantedBy=network-online.target
+
+```
+
+### 5.3 Skrip Backup Harian Tanpa Downtime (`scripts/backup.sh`)
+
+```
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKUP_DIR="/opt/sipesantren/backups/$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+
+sqlite3 /opt/sipesantren/data/sipesantren.db ".backup '$BACKUP_DIR/sipesantren.db'"
+rsync -a /opt/sipesantren/data/private_photos/ "$BACKUP_DIR/private_photos/"
+
+find /opt/sipesantren/backups -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} +
+
+```
+
+## 6. Checklist Verifikasi Modul 09
+
+* \[ \] `cargo test --test e2e_flow` lulus 100% untuk seluruh 12 skenario di atas.
+
+* \[ \] Seluruh 26 route (8 halaman HTML + 2 auth + 6 API Sambang + 2 API Logbook + 1 API Tahfidz + 2 API Ujian/Nilai + 2 API Kesantrian + 2 SSE + 1 Healthcheck) terdaftar di `build_app_router`.
+
+==================== END OF DOCUMENT: MOD_09_DEPLOY_AND_E2E_TEST.md ====================

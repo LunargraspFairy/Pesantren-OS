@@ -1,0 +1,177 @@
+{% extends "layout.html" %}
+
+{% block title %}Dashboard Admin Posko & Akademik - SiPesantren{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <!-- Top Metrics Bar -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-xs">
+      <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Santri Aktif</div>
+      <div class="text-2xl font-bold text-slate-900 font-mono tabular-nums mt-1">{{ santri_count }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-xs">
+      <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Setoran Tahfidz</div>
+      <div class="text-2xl font-bold text-emerald-900 font-mono tabular-nums mt-1">{{ tahfidz_total_count }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-xs">
+      <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Sesi Ujian</div>
+      <div class="text-2xl font-bold text-slate-900 font-mono tabular-nums mt-1">{{ exam_total_count }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-xs">
+      <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Kunjungan Hari Ini</div>
+      <div class="text-2xl font-bold text-emerald-950 font-mono tabular-nums mt-1">{{ visits.len() }}</div>
+    </div>
+  </div>
+
+  <!-- Filter Kunjungan -->
+  <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div>
+      <h1 class="text-base font-bold text-slate-900 tracking-tight">Manajemen Alur Sambang & Logbook Posko</h1>
+      <p class="text-xs text-slate-600">Tetapkan jadwal, panggil santri ke asrama, dan dokumentasikan foto pertemuan.</p>
+    </div>
+
+    <form method="GET" action="/admin" class="flex flex-wrap items-center gap-2">
+      <label class="text-xs font-semibold text-slate-700">Filter:</label>
+      <input type="date" name="date" value="{{ filter_date }}" class="px-2.5 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+      <select name="status" class="px-2.5 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+        <option value="ALL" {% if filter_status == "ALL" %}selected{% endif %}>Semua Status</option>
+        <option value="REQUESTED" {% if filter_status == "REQUESTED" %}selected{% endif %}>REQUESTED</option>
+        <option value="SCHEDULED" {% if filter_status == "SCHEDULED" %}selected{% endif %}>SCHEDULED</option>
+        <option value="CONFIRMED_BY_WALI" {% if filter_status == "CONFIRMED_BY_WALI" %}selected{% endif %}>CONFIRMED_BY_WALI</option>
+        <option value="SANTRI_CALLED" {% if filter_status == "SANTRI_CALLED" %}selected{% endif %}>SANTRI_CALLED</option>
+        <option value="SANTRI_CONFIRMED" {% if filter_status == "SANTRI_CONFIRMED" %}selected{% endif %}>SANTRI_CONFIRMED</option>
+        <option value="COMPLETED" {% if filter_status == "COMPLETED" %}selected{% endif %}>COMPLETED</option>
+      </select>
+      <button type="submit" class="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded text-xs font-medium transition">Terapkan</button>
+    </form>
+  </div>
+
+  <!-- Tabel Kunjungan Admin -->
+  <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
+    <div class="p-4 border-b border-slate-200 font-semibold text-sm text-slate-800 flex justify-between items-center">
+      <span>Daftar Kunjungan Tanggal {{ filter_date }}</span>
+      <span class="text-xs text-slate-500 font-normal">Sinkronisasi otomatis event</span>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="bg-slate-100 text-slate-700 uppercase font-semibold border-b border-slate-200">
+          <tr>
+            <th class="py-2.5 px-3">Kode Tiket</th>
+            <th class="py-2.5 px-3">Santri & Kamar</th>
+            <th class="py-2.5 px-3">Wali & Kontak</th>
+            <th class="py-2.5 px-3">Titipan</th>
+            <th class="py-2.5 px-3">Jadwal & Lokasi</th>
+            <th class="py-2.5 px-3">Status</th>
+            <th class="py-2.5 px-3">Tindakan Petugas</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-200">
+          {% if visits.is_empty() %}
+          <tr><td colspan="7" class="py-6 text-center text-slate-500">Tidak ada kunjungan pada kriteria ini.</td></tr>
+          {% else %}
+          {% for v in visits %}
+          <tr class="hover:bg-slate-50 transition">
+            <td class="py-3 px-3 font-mono font-bold text-emerald-950 tabular-nums">
+              {{ v.ticket_code }}
+              <div class="text-[10px] text-slate-400 font-sans font-normal">{{ v.requested_session }} ({{ v.visitor_count }} org)</div>
+            </td>
+            <td class="py-3 px-3">
+              <div class="font-bold text-slate-900">{{ v.santri_name }}</div>
+              <div class="text-[11px] text-slate-600">{{ v.dormitory_name }} • {{ v.room_name }}</div>
+            </td>
+            <td class="py-3 px-3">
+              <div class="font-medium text-slate-800">{{ v.wali_name }}</div>
+              <div class="text-[11px] font-mono text-slate-500 tabular-nums">{{ v.wali_phone }}</div>
+            </td>
+            <td class="py-3 px-3 max-w-xs">
+              {% if v.has_titipan == 1 %}
+                <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">ADA TITIPAN</span>
+                <div class="text-[11px] text-slate-600 mt-0.5 italic">{{ v.titipan_display() }}</div>
+              {% else %}
+                <span class="text-slate-400">Tidak ada</span>
+              {% endif %}
+            </td>
+            <td class="py-3 px-3">
+              <div class="font-mono font-medium tabular-nums">{{ v.schedule_window_display() }}</div>
+              <div class="text-[11px] text-slate-600">{{ v.spot_display() }}</div>
+            </td>
+            <td class="py-3 px-3">
+              {% if v.current_status == "REQUESTED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-800">REQUESTED</span>
+              {% else if v.current_status == "SCHEDULED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-800">SCHEDULED</span>
+              {% else if v.current_status == "CONFIRMED_BY_WALI" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800">WALI HADIR</span>
+              {% else if v.current_status == "SANTRI_CALLED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900">SANTRI DIPANGGIL</span>
+              {% else if v.current_status == "SANTRI_CONFIRMED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-900">MENUJU LOKASI</span>
+              {% else if v.current_status == "COMPLETED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-800">COMPLETED</span>
+              {% else %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-800">{{ v.current_status }}</span>
+              {% endif %}
+            </td>
+            <td class="py-3 px-3 space-y-2">
+              {% if v.current_status == "REQUESTED" %}
+              <!-- Form Tetapkan Jadwal -->
+              <form action="/api/visits/{{ v.id }}/schedule" method="POST" class="flex flex-col gap-1.5 p-2 bg-slate-100 rounded border border-slate-200">
+                <div class="grid grid-cols-2 gap-1">
+                  <input type="text" name="scheduled_start" placeholder="09:00" required class="px-1.5 py-1 border border-slate-300 rounded text-[11px] font-mono" />
+                  <input type="text" name="scheduled_end" placeholder="09:45" required class="px-1.5 py-1 border border-slate-300 rounded text-[11px] font-mono" />
+                </div>
+                <input type="text" name="meeting_spot" placeholder="Ruang / Gazebo Temu" required class="px-1.5 py-1 border border-slate-300 rounded text-[11px]" />
+                <button type="submit" class="px-2 py-1 bg-emerald-800 hover:bg-emerald-900 text-white rounded text-[11px] font-medium transition">
+                  Tetapkan Jadwal
+                </button>
+              </form>
+              {% endif %}
+
+              {% if v.current_status == "CONFIRMED_BY_WALI" %}
+              <!-- Tombol Panggil Santri -->
+              <form action="/api/visits/{{ v.id }}/call-santri" method="POST">
+                <button type="submit" class="w-full px-2.5 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded text-[11px] font-bold transition shadow-xs">
+                  Panggil Santri ke Asrama
+                </button>
+              </form>
+              {% endif %}
+
+              {% if v.current_status == "SANTRI_CONFIRMED" %}
+              <!-- Form Upload Logbook Foto Pertemuan Kompresi WebP -->
+              <form onsubmit="submitCompressedLogbook(event, '{{ v.id }}')" class="p-2 bg-emerald-50 rounded border border-emerald-200 space-y-1.5">
+                <div class="text-[10px] font-bold text-emerald-950 uppercase">Ambil Foto Pertemuan (Wali & Santri)</div>
+                <input type="file" accept="image/*" capture="environment" required class="w-full text-[10px] text-slate-700 file:mr-1 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-emerald-800 file:text-white" />
+                <textarea name="meeting_notes" rows="1" placeholder="Catatan pertemuan (opsional)..." class="w-full px-1.5 py-1 border border-slate-300 rounded text-[10px]"></textarea>
+                <button type="submit" class="w-full py-1 bg-emerald-800 hover:bg-emerald-900 text-white rounded text-[11px] font-medium transition">
+                  Unggah WebP & Selesaikan
+                </button>
+              </form>
+              {% endif %}
+
+              {% if v.current_status == "COMPLETED" %}
+              <div class="flex items-center space-x-1.5">
+                <a href="/api/visits/{{ v.id }}/logbook/photo" target="_blank" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded text-[11px] transition">
+                  Lihat Foto
+                </a>
+                <span class="text-[10px] text-emerald-800 font-semibold">Terdokumentasi</span>
+              </div>
+              {% endif %}
+
+              {% if v.current_status == "REQUESTED" || v.current_status == "SCHEDULED" || v.current_status == "CONFIRMED_BY_WALI" %}
+              <form action="/api/visits/{{ v.id }}/cancel" method="POST" onsubmit="return confirm('Batalkan kunjungan ini?');">
+                <input type="hidden" name="cancel_reason" value="Dibatalkan oleh Admin Posko" />
+                <button type="submit" class="text-[10px] text-red-600 hover:underline">Batalkan Tiket</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

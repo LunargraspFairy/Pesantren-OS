@@ -1,0 +1,443 @@
+{% extends "layout.html" %}
+
+{% block title %}Portal Wali Santri - SiPesantren{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{ activeTab: 'sambang' }">
+  <!-- Ringkasan Profil Santri (Sticky Profile Bar) -->
+  <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-12 h-12 rounded-full bg-emerald-950 text-white flex items-center justify-center font-bold text-lg font-mono">
+          {{ active_santri.nis }}
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-lg font-bold text-slate-900">{{ active_santri.full_name }}</h1>
+            <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 font-semibold">{{ active_santri.class_level }}</span>
+          </div>
+          <div class="text-xs text-slate-600 mt-0.5">
+            NIS: <span class="font-mono tabular-nums font-semibold">{{ active_santri.nis }}</span> • Kamar: <span class="font-medium text-slate-800">{{ active_santri.room_name }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 text-xs">
+        <div class="bg-slate-50 border border-slate-200 px-3 py-2 rounded-md">
+          <div class="text-slate-500 text-[10px] uppercase font-semibold">Total Hafalan</div>
+          <div class="font-bold text-emerald-900 font-mono text-sm tabular-nums">{{ active_santri.total_juz_memorized }} / 30 Juz</div>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 px-3 py-2 rounded-md">
+          <div class="text-slate-500 text-[10px] uppercase font-semibold">Fokus Surah Saat Ini</div>
+          <div class="font-bold text-slate-800 text-xs truncate max-w-[150px]">{{ active_santri.current_surah_focus }}</div>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 px-3 py-2 rounded-md">
+          <div class="text-slate-500 text-[10px] uppercase font-semibold">Kehadiran Kegiatan</div>
+          <div class="font-bold text-slate-800 font-mono text-sm tabular-nums">{{ hadir_count }} Hadir <span class="text-slate-400 font-normal">({{ sakit_izin_count }} Sakit/Izin)</span></div>
+        </div>
+
+        {% if santri_list.len() > 1 %}
+        <div class="no-print">
+          <label for="santri-switch" class="sr-only">Pilih Santri</label>
+          <select id="santri-switch" onchange="window.location.href='/wali?santri_id=' + this.value" class="px-2.5 py-2 border border-slate-300 rounded-md text-xs bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+            {% for s in santri_list %}
+            <option value="{{ s.id }}" {% if s.id == active_santri.id %}selected{% endif %}>{{ s.full_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Tab Navigasi 4 Pilar -->
+    <div class="no-print flex border-b border-slate-200 mt-6 -mb-5 space-x-1 sm:space-x-4 overflow-x-auto text-xs font-semibold">
+      <button @click="activeTab = 'sambang'" :class="activeTab === 'sambang' ? 'border-emerald-800 text-emerald-950 border-b-2' : 'text-slate-500 hover:text-slate-700'" class="py-3 px-3 transition whitespace-nowrap">
+        1. Sambang & Logbook Pertemuan
+      </button>
+      <button @click="activeTab = 'tahfidz'" :class="activeTab === 'tahfidz' ? 'border-emerald-800 text-emerald-950 border-b-2' : 'text-slate-500 hover:text-slate-700'" class="py-3 px-3 transition whitespace-nowrap">
+        2. Tahfidz & Mutun Kitab
+      </button>
+      <button @click="activeTab = 'rapor'" :class="activeTab === 'rapor' ? 'border-emerald-800 text-emerald-950 border-b-2' : 'text-slate-500 hover:text-slate-700'" class="py-3 px-3 transition whitespace-nowrap">
+        3. Ujian & Rapor Digital
+      </button>
+      <button @click="activeTab = 'kesantrian'" :class="activeTab === 'kesantrian' ? 'border-emerald-800 text-emerald-950 border-b-2' : 'text-slate-500 hover:text-slate-700'" class="py-3 px-3 transition whitespace-nowrap">
+        4. Kesantrian & Kehadiran
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB 1: SAMBANG & LOGBOOK -->
+  <div x-show="activeTab === 'sambang'" class="space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Form Pengajuan Sambang Baru -->
+      <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+        <h2 class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 mb-4">Ajukan Sambang & Titipan</h2>
+        <form action="/api/visits" method="POST" class="space-y-3">
+          <input type="hidden" name="santri_id" value="{{ active_santri.id }}" />
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Rencana Tanggal Kunjungan</label>
+            <input type="date" name="requested_date" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Sesi Kunjungan</label>
+            <select name="requested_session" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              <option value="PAGI">Pagi (08:30 - 11:30)</option>
+              <option value="SIANG">Siang (13:00 - 15:00)</option>
+              <option value="SORE">Sore (15:30 - 17:30)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Perkiraan Jumlah Pengunjung</label>
+            <input type="number" name="visitor_count" value="2" min="1" max="10" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+          </div>
+
+          <div class="pt-2 border-t border-slate-200" x-data="{ bawaTitipan: false }">
+            <div class="flex items-center space-x-2">
+              <input type="checkbox" id="has_titipan" name="has_titipan" x-model="bawaTitipan" value="true" class="rounded text-emerald-800 focus:ring-emerald-700" />
+              <label for="has_titipan" class="text-xs font-semibold text-slate-800">Membawa Barang Titipan</label>
+            </div>
+            <div x-show="bawaTitipan" class="mt-2">
+              <label class="block text-[11px] text-slate-600 mb-1">Rincian Barang Titipan:</label>
+              <textarea name="titipan_description" rows="2" placeholder="Contoh: Pakaian ganti 3 stel, vitamin, kitab jurumiyah" class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700"></textarea>
+            </div>
+          </div>
+
+          <button type="submit" class="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-medium text-xs rounded transition shadow-xs">
+            Kirim Pengajuan Sambang
+          </button>
+        </form>
+      </div>
+
+      <!-- Jadwal Kunjungan Aktif -->
+      <div class="lg:col-span-2 space-y-4">
+        <h2 class="font-bold text-sm text-slate-900">Jadwal Sambang Berjalan</h2>
+        {% if active_visits.is_empty() %}
+        <div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-xs text-slate-500">
+          Tidak ada jadwal kunjungan aktif saat ini. Silakan ajukan jadwal di samping.
+        </div>
+        {% else %}
+        {% for v in active_visits %}
+        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-xs space-y-3">
+          <div class="flex justify-between items-start">
+            <div>
+              <span class="text-xs font-bold font-mono text-emerald-950 tabular-nums">{{ v.ticket_code }}</span>
+              <div class="text-xs text-slate-600 mt-0.5">Tanggal: <span class="font-mono font-medium">{{ v.requested_date }}</span> (Sesi {{ v.requested_session }})</div>
+            </div>
+            <div>
+              {% if v.current_status == "REQUESTED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-800 border border-slate-300">MENUNGGU PENJADWALAN</span>
+              {% else if v.current_status == "SCHEDULED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-800 border border-blue-200">JADWAL TELAH DITETAPKAN</span>
+              {% else if v.current_status == "CONFIRMED_BY_WALI" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200">KEHADIRAN TERKONFIRMASI</span>
+              {% else if v.current_status == "SANTRI_CALLED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">SANTRI SEDANG DIPANGGIL</span>
+              {% else if v.current_status == "SANTRI_CONFIRMED" %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-900 border border-emerald-300">SANTRI MENUJU LOKASI</span>
+              {% else %}
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-800">{{ v.current_status }}</span>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded text-xs border border-slate-200">
+            <div><span class="text-slate-500">Jam:</span> <span class="font-mono font-semibold">{{ v.schedule_window_display() }}</span></div>
+            <div><span class="text-slate-500">Lokasi:</span> <span class="font-medium text-slate-800">{{ v.spot_display() }}</span></div>
+            <div><span class="text-slate-500">Titipan:</span> <span class="font-medium text-slate-800">{{ v.titipan_display() }}</span></div>
+          </div>
+
+          {% if v.current_status == "SANTRI_CONFIRMED" %}
+          <div class="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs rounded-md">
+            Pengurus Asrama telah mengabarkan kepada santri. Santri sedang dalam perjalanan menuju <strong>{{ v.spot_display() }}</strong>.
+          </div>
+          {% endif %}
+
+          <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+            {% if v.current_status == "SCHEDULED" %}
+            <form action="/api/visits/{{ v.id }}/wali-confirm" method="POST">
+              <button type="submit" class="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded text-xs font-medium transition">
+                Konfirmasi Kehadiran Saya
+              </button>
+            </form>
+            {% endif %}
+
+            {% if v.current_status == "REQUESTED" || v.current_status == "SCHEDULED" %}
+            <form action="/api/visits/{{ v.id }}/cancel" method="POST" onsubmit="return confirm('Yakin ingin membatalkan jadwal kunjungan ini?');">
+              <input type="hidden" name="cancel_reason" value="Dibatalkan oleh Wali Santri" />
+              <button type="submit" class="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded text-xs font-medium transition">
+                Batalkan
+              </button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Galeri Logbook Foto Pertemuan Selesai -->
+    <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-200 pb-3">
+        <div>
+          <h2 class="font-bold text-sm text-slate-900">Galeri Foto Pertemuan Privat (Logbook Selesai)</h2>
+          <p class="text-xs text-slate-500">Dokumentasi foto resmi pertemuan antara Wali dan Santri yang diambil petugas saat kunjungan.</p>
+        </div>
+        <span class="text-xs font-mono text-slate-500 tabular-nums">{{ completed_logbooks.len() }} Kunjungan Selesai</span>
+      </div>
+
+      {% if completed_logbooks.is_empty() %}
+      <div class="py-8 text-center text-xs text-slate-500">
+        Belum ada dokumentasi kunjungan selesai. Foto akan otomatis muncul di sini setelah pertemuan di posko sambang selesai.
+      </div>
+      {% else %}
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        {% for v in completed_logbooks %}
+        <div class="border border-slate-200 rounded-lg overflow-hidden bg-slate-50 shadow-xs">
+          <img src="/api/visits/{{ v.id }}/logbook/photo" alt="Foto Pertemuan Santri" class="w-full h-48 object-cover bg-slate-200" loading="lazy" />
+          <div class="p-3 text-xs space-y-1">
+            <div class="font-mono font-bold text-slate-900">{{ v.ticket_code }}</div>
+            <div class="text-slate-600">Tanggal: <span class="font-mono">{{ v.requested_date }}</span></div>
+            <div class="text-slate-600">Lokasi: {{ v.spot_display() }}</div>
+            <div class="text-slate-600 italic">"{{ v.meeting_notes_display() }}"</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- TAB 2: TAHFIDZ & MUTUN -->
+  <div x-show="activeTab === 'tahfidz'" class="space-y-6">
+    <!-- Visualisasi Progress Bar 30 Juz -->
+    <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs space-y-3">
+      <div class="flex justify-between items-center text-xs font-semibold">
+        <span class="text-slate-900">Pencapaian Hafalan Al-Qur'an (30 Juz)</span>
+        <span class="text-emerald-900 font-mono text-sm tabular-nums">{{ active_santri.total_juz_memorized }} / 30 Juz ({{ (active_santri.total_juz_memorized * 100) / 30 }}%)</span>
+      </div>
+      <div class="w-full bg-slate-200 h-3 rounded-full overflow-hidden">
+        <div class="bg-emerald-800 h-3 rounded-full transition-all duration-500" style="width: {{ (active_santri.total_juz_memorized * 100) / 30 }}%;"></div>
+      </div>
+      <div class="text-xs text-slate-600 flex justify-between">
+        <span>Fokus Surah: <strong>{{ active_santri.current_surah_focus }}</strong></span>
+        <span>Target: 30 Juz Mutqin</span>
+      </div>
+    </div>
+
+    <!-- Tabel Riwayat Setoran -->
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
+      <div class="p-4 border-b border-slate-200 font-semibold text-sm text-slate-800 flex justify-between items-center">
+        <span>Riwayat Setoran Tahfidz & Mutun Kitab</span>
+        <span class="text-xs text-slate-500 font-normal">50 Setoran Terakhir</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-100 text-slate-700 uppercase font-semibold border-b border-slate-200">
+            <tr>
+              <th class="py-2.5 px-3">Tanggal</th>
+              <th class="py-2.5 px-3">Tipe</th>
+              <th class="py-2.5 px-3">Juz</th>
+              <th class="py-2.5 px-3">Surah / Kitab</th>
+              <th class="py-2.5 px-3">Ayat / Bait</th>
+              <th class="py-2.5 px-3">Predikat</th>
+              <th class="py-2.5 px-3">Skor</th>
+              <th class="py-2.5 px-3">Catatan Tajwid/Kelancaran</th>
+              <th class="py-2.5 px-3">Penyimak</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-200">
+            {% if tahfidz_logs.is_empty() %}
+            <tr><td colspan="9" class="py-6 text-center text-slate-500">Belum ada riwayat setoran tahfidz.</td></tr>
+            {% else %}
+            {% for log in tahfidz_logs %}
+            <tr class="hover:bg-slate-50 transition">
+              <td class="py-2.5 px-3 font-mono tabular-nums text-slate-700">{{ log.session_date }}</td>
+              <td class="py-2.5 px-3">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-900 border border-emerald-300">{{ log.log_type }}</span>
+              </td>
+              <td class="py-2.5 px-3 font-mono tabular-nums">{{ log.juz_number }}</td>
+              <td class="py-2.5 px-3 font-medium text-slate-900">{{ log.surah_or_kitab }}</td>
+              <td class="py-2.5 px-3 font-mono tabular-nums">{{ log.ayah_or_bait_start }} - {{ log.ayah_or_bait_end }}</td>
+              <td class="py-2.5 px-3">
+                {% if log.predicate == "MUMTAZ" %}
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900">MUMTAZ</span>
+                {% else if log.predicate == "JAYYID_JIDDAN" %}
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800">JAYYID JIDDAN</span>
+                {% else if log.predicate == "MENGULANG" %}
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-900">MENGULANG</span>
+                {% else %}
+                  <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-800">{{ log.predicate }}</span>
+                {% endif %}
+              </td>
+              <td class="py-2.5 px-3 font-mono font-bold tabular-nums">{{ log.score_numeric }}</td>
+              <td class="py-2.5 px-3 text-slate-600 max-w-xs">{{ log.notes_display() }}</td>
+              <td class="py-2.5 px-3 text-slate-800 font-medium">{{ log.evaluator_name }}</td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: UJIAN & RAPOR DIGITAL -->
+  <div x-show="activeTab === 'rapor'" class="space-y-6">
+    <!-- Lembar Rapor Digital Siap Cetak -->
+    <div class="bg-white border border-slate-200 rounded-lg p-6 shadow-xs space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b-2 border-emerald-900 pb-4 gap-4">
+        <div class="flex items-center space-x-3">
+          <img src="{{ logo_url }}" alt="Logo Pondok Pesantren" class="h-14 w-14 object-contain rounded-md border border-slate-200 p-1 bg-white" />
+          <div>
+            <h2 class="text-base font-bold text-emerald-950 uppercase tracking-tight">Pondok Pesantren Salafiyah Terpadu</h2>
+            <div class="text-xs text-slate-600">Laporan Hasil Evaluasi Belajar Santri (Rapor Digital)</div>
+            <div class="text-xs font-semibold text-emerald-900 mt-0.5">Semester {{ active_term.term_name }}</div>
+          </div>
+        </div>
+        <div class="no-print">
+          <button onclick="window.print()" class="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded text-xs font-medium transition shadow-xs">
+            Cetak Rapor (Print / PDF)
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs bg-slate-50 p-3 rounded border border-slate-200">
+        <div><span class="text-slate-500">Nama Santri:</span> <span class="font-bold text-slate-900">{{ active_santri.full_name }}</span></div>
+        <div><span class="text-slate-500">Nomor Induk (NIS):</span> <span class="font-mono font-semibold">{{ active_santri.nis }}</span></div>
+        <div><span class="text-slate-500">Tingkat Kelas:</span> <span class="font-semibold">{{ active_santri.class_level }}</span></div>
+        <div><span class="text-slate-500">Tahun Ajaran:</span> <span class="font-semibold">{{ active_term.academic_year }}</span></div>
+      </div>
+
+      <!-- Tabel Agregasi Rapor -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs border border-slate-300">
+          <thead class="bg-slate-100 text-slate-800 uppercase font-semibold border-b border-slate-300">
+            <tr>
+              <th class="py-2 px-3 border-r border-slate-300">Kode</th>
+              <th class="py-2 px-3 border-r border-slate-300">Mata Pelajaran</th>
+              <th class="py-2 px-3 border-r border-slate-300">Kategori</th>
+              <th class="py-2 px-3 border-r border-slate-300 text-center">KKM</th>
+              <th class="py-2 px-3 border-r border-slate-300 text-center">Harian</th>
+              <th class="py-2 px-3 border-r border-slate-300 text-center">UTS</th>
+              <th class="py-2 px-3 border-r border-slate-300 text-center">UAS</th>
+              <th class="py-2 px-3 border-r border-slate-300 text-center">Syafahi</th>
+              <th class="py-2 px-3 border-r border-slate-300 text-center font-bold">Nilai Akhir</th>
+              <th class="py-2 px-3 border-r border-slate-300 text-center">Huruf</th>
+              <th class="py-2 px-3 border-r border-slate-300">Predikat</th>
+              <th class="py-2 px-3 text-center">Ketuntasan</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-300">
+            {% for row in rapor_rows %}
+            <tr>
+              <td class="py-2 px-3 font-mono tabular-nums border-r border-slate-300">{{ row.subject_code }}</td>
+              <td class="py-2 px-3 font-semibold text-slate-900 border-r border-slate-300">{{ row.subject_name }}</td>
+              <td class="py-2 px-3 border-r border-slate-300 text-slate-600">{{ row.category }}</td>
+              <td class="py-2 px-3 font-mono tabular-nums text-center border-r border-slate-300">{{ row.kkm_score }}</td>
+              <td class="py-2 px-3 font-mono tabular-nums text-center border-r border-slate-300">{{ row.harian_display }}</td>
+              <td class="py-2 px-3 font-mono tabular-nums text-center border-r border-slate-300">{{ row.uts_display }}</td>
+              <td class="py-2 px-3 font-mono tabular-nums text-center border-r border-slate-300">{{ row.uas_display }}</td>
+              <td class="py-2 px-3 font-mono tabular-nums text-center border-r border-slate-300">{{ row.syafahi_display }}</td>
+              <td class="py-2 px-3 font-mono font-bold text-center border-r border-slate-300 text-emerald-950 tabular-nums">{{ row.final_display }}</td>
+              <td class="py-2 px-3 font-mono font-bold text-center border-r border-slate-300">{{ row.letter_grade }}</td>
+              <td class="py-2 px-3 border-r border-slate-300">{{ row.predicate_label }}</td>
+              <td class="py-2 px-3 text-center font-bold">
+                {% if row.passed_kkm %}
+                  <span class="text-emerald-800 text-[11px]">TUNTAS</span>
+                {% else %}
+                  <span class="text-red-700 text-[11px]">BELUM</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: KESANTRIAN & KEHADIRAN -->
+  <div x-show="activeTab === 'kesantrian'" class="space-y-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Tabel Log Kehadiran -->
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
+        <div class="p-4 border-b border-slate-200 font-semibold text-sm text-slate-800">
+          Riwayat Kehadiran Sholat & Kegiatan
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-100 text-slate-700 uppercase font-semibold border-b border-slate-200">
+              <tr>
+                <th class="py-2 px-3">Tanggal</th>
+                <th class="py-2 px-3">Kegiatan</th>
+                <th class="py-2 px-3">Status</th>
+                <th class="py-2 px-3">Keterangan</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              {% if attendance_logs.is_empty() %}
+              <tr><td colspan="4" class="py-6 text-center text-slate-500">Belum ada data kehadiran.</td></tr>
+              {% else %}
+              {% for att in attendance_logs %}
+              <tr class="hover:bg-slate-50 transition">
+                <td class="py-2 px-3 font-mono tabular-nums text-slate-700">{{ att.attendance_date }}</td>
+                <td class="py-2 px-3 font-medium text-slate-800">{{ att.activity_type }}</td>
+                <td class="py-2 px-3">
+                  {% if att.status == "HADIR" %}
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900">HADIR</span>
+                  {% else if att.status == "SAKIT" %}
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900">SAKIT</span>
+                  {% else if att.status == "IZIN" %}
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-900">IZIN</span>
+                  {% else %}
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-900">ALFA</span>
+                  {% endif %}
+                </td>
+                <td class="py-2 px-3 text-slate-600">{{ att.note_display() }}</td>
+              </tr>
+              {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tabel Catatan Adab & Prestasi -->
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
+        <div class="p-4 border-b border-slate-200 font-semibold text-sm text-slate-800">
+          Catatan Prestasi & Pembinaan Adab
+        </div>
+        <div class="divide-y divide-slate-200 p-4 space-y-3">
+          {% if santri_notes.is_empty() %}
+          <div class="py-6 text-center text-xs text-slate-500">Belum ada catatan khusus kesantrian.</div>
+          {% else %}
+          {% for note in santri_notes %}
+          <div class="pt-3 first:pt-0">
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-bold text-slate-900">{{ note.title }}</span>
+              <span class="font-mono text-slate-500 tabular-nums">{{ note.note_date }}</span>
+            </div>
+            <div class="mt-1">
+              {% if note.category == "PRESTASI" %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">PRESTASI</span>
+              {% else if note.category == "PEMBINAAN_ADAB" %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">PEMBINAAN ADAB</span>
+              {% else %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-900 border border-blue-300">IZIN KESEHATAN / PULANG</span>
+              {% endif %}
+            </div>
+            <p class="text-xs text-slate-700 mt-1.5">{{ note.description }}</p>
+            <div class="text-[10px] text-slate-400 mt-1">Dicatat oleh: {{ note.recorded_by_name }}</div>
+          </div>
+          {% endfor %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

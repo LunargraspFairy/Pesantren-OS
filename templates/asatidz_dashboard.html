@@ -1,0 +1,346 @@
+{% extends "layout.html" %}
+
+{% block title %}Workspace Asatidz & Dewan Guru - SiPesantren{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{ panel: 'tahfidz' }">
+  <!-- Header Bar Asatidz -->
+  <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div>
+      <span class="text-xs font-semibold uppercase tracking-wider text-emerald-800">Workspace Pengajar & Penguji</span>
+      <h1 class="text-lg font-bold text-slate-900 tracking-tight">{{ user_name }}</h1>
+      <div class="text-xs text-slate-600 mt-0.5">Semester Aktif: <strong class="text-emerald-950">{{ active_term.term_name }}</strong> • Hari Ini: <span class="font-mono tabular-nums">{{ today_date }}</span></div>
+    </div>
+
+    <!-- Panel Switcher -->
+    <div class="flex space-x-2 text-xs font-semibold">
+      <button @click="panel = 'tahfidz'" :class="panel === 'tahfidz' ? 'bg-emerald-950 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'" class="px-3 py-2 rounded-md transition">
+        Input Setoran Tahfidz
+      </button>
+      <button @click="panel = 'akademik'" :class="panel === 'akademik' ? 'bg-emerald-950 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'" class="px-3 py-2 rounded-md transition">
+        Ujian & Nilai Mapel
+      </button>
+      <button @click="panel = 'kesantrian'" :class="panel === 'kesantrian' ? 'bg-emerald-950 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'" class="px-3 py-2 rounded-md transition">
+        Absensi & Catatan Adab
+      </button>
+    </div>
+  </div>
+
+  <!-- PANEL 1: INPUT SETORAN TAHFIDZ -->
+  <div x-show="panel === 'tahfidz'" class="space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Form Input Setoran Cepat -->
+      <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+        <h2 class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 mb-4">Input Setoran Hafalan Baru</h2>
+        <form action="/api/tahfidz" method="POST" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Nama Santri</label>
+            <select name="santri_id" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              {% for s in santri_list %}
+              <option value="{{ s.id }}">{{ s.full_name }} ({{ s.nis }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal</label>
+              <input type="date" name="session_date" value="{{ today_date }}" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tipe Setoran</label>
+              <select name="log_type" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+                <option value="ZIYADAH">Ziyadah (Baru)</option>
+                <option value="MUROJAAH">Muroja'ah (Ulang)</option>
+                <option value="TASMI_JUZ">Tasmi' 1 Juz</option>
+                <option value="MUTUN_KITAB">Mutun Kitab</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Juz</label>
+              <input type="number" name="juz_number" value="30" min="1" max="30" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+            <div class="col-span-2">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Surah / Nama Kitab</label>
+              <input type="text" name="surah_or_kitab" placeholder="Misal: QS. An-Naba / Imrithi" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Ayat/Bait Awal</label>
+              <input type="number" name="ayah_or_bait_start" value="1" min="1" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Ayat/Bait Akhir</label>
+              <input type="number" name="ayah_or_bait_end" value="20" min="1" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Predikat</label>
+              <select name="predicate" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+                <option value="MUMTAZ">Mumtaz (Istimewa)</option>
+                <option value="JAYYID_JIDDAN">Jayyid Jiddan (Sangat Baik)</option>
+                <option value="JAYYID">Jayyid (Baik)</option>
+                <option value="MAQBUL">Maqbul (Cukup)</option>
+                <option value="MENGULANG">Mengulang</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Skor Angka (0-100)</label>
+              <input type="number" name="score_numeric" value="85" min="0" max="100" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Koreksi Tajwid / Makharijul Huruf</label>
+            <textarea name="notes" rows="2" placeholder="Catatan perbaikan tajwid, mad, waqaf..." class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-[11px] text-slate-600 mb-1">Perbarui Total Capaian Juz Santri (Opsional)</label>
+            <input type="number" name="update_total_juz" min="0" max="30" placeholder="Kosongkan jika tidak ada penambahan juz utuh" class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+          </div>
+
+          <button type="submit" class="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-medium text-xs rounded transition shadow-xs">
+            Simpan Setoran & Notifikasi Wali
+          </button>
+        </form>
+      </div>
+
+      <!-- Tabel Riwayat Input Terbaru -->
+      <div class="lg:col-span-2 bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
+        <div class="p-4 border-b border-slate-200 font-semibold text-sm text-slate-800 flex justify-between items-center">
+          <span>Setoran Terakhir yang Disimak</span>
+          <span class="text-xs text-slate-500 font-normal">25 Setoran Terakhir</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-100 text-slate-700 uppercase font-semibold border-b border-slate-200">
+              <tr>
+                <th class="py-2.5 px-3">Tanggal</th>
+                <th class="py-2.5 px-3">Santri</th>
+                <th class="py-2.5 px-3">Tipe</th>
+                <th class="py-2.5 px-3">Materi / Ayat</th>
+                <th class="py-2.5 px-3">Predikat</th>
+                <th class="py-2.5 px-3">Skor</th>
+                <th class="py-2.5 px-3">Catatan</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              {% for item in recent_tahfidz %}
+              <tr class="hover:bg-slate-50 transition">
+                <td class="py-2.5 px-3 font-mono tabular-nums text-slate-700">{{ item.session_date }}</td>
+                <td class="py-2.5 px-3 font-semibold text-slate-900">{{ item.santri_name }}</td>
+                <td class="py-2.5 px-3">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-900">{{ item.log_type }}</span>
+                </td>
+                <td class="py-2.5 px-3 font-medium text-slate-800">Juz {{ item.juz_number }} • {{ item.surah_or_kitab }} ({{ item.ayah_or_bait_start }}-{{ item.ayah_or_bait_end }})</td>
+                <td class="py-2.5 px-3 font-semibold text-emerald-900">{{ item.predicate }}</td>
+                <td class="py-2.5 px-3 font-mono font-bold tabular-nums">{{ item.score_numeric }}</td>
+                <td class="py-2.5 px-3 text-slate-600 max-w-xs">{{ item.notes_display() }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PANEL 2: UJIAN & NILAI MAPEL -->
+  <div x-show="panel === 'akademik'" class="space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Form Buat Sesi Ujian Baru -->
+      <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+        <h2 class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 mb-4">Buat Jadwal Sesi Ujian Baru</h2>
+        <form action="/api/exams" method="POST" class="space-y-3">
+          <input type="hidden" name="term_id" value="{{ active_term.id }}" />
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Mata Pelajaran</label>
+            <select name="subject_id" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              {% for sub in subjects %}
+              <option value="{{ sub.id }}">[{{ sub.code }}] {{ sub.name }} (KKM: {{ sub.kkm_score }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Jenis Ujian</label>
+              <select name="exam_type" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+                <option value="HARIAN">Penilaian Harian</option>
+                <option value="UTS">UTS (Tengah Semester)</option>
+                <option value="UAS">UAS (Akhir Semester)</option>
+                <option value="SYAFAHI_LISAN">Ujian Lisan / Syafahi</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tingkat Kelas</label>
+              <input type="text" name="class_level" value="Kelas 2 Wustha" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal Ujian</label>
+              <input type="date" name="exam_date" value="{{ today_date }}" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Judul / Materi Ujian</label>
+              <input type="text" name="title" placeholder="Misal: Ujian Lisan Bab Thaharah" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+          </div>
+
+          <button type="submit" class="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-medium text-xs rounded transition shadow-xs">
+            Buka Sesi Ujian Baru
+          </button>
+        </form>
+      </div>
+
+      <!-- Form Input Nilai Santri -->
+      <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+        <h2 class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 mb-4">Input Nilai Angka Santri</h2>
+        <form action="/api/exams/grades" method="POST" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Pilih Sesi Ujian</label>
+            <select name="exam_id" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              {% for ex in exams %}
+              <option value="{{ ex.id }}">{{ ex.title }} • {{ ex.subject_name }} ({{ ex.exam_type }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Santri</label>
+            <select name="santri_id" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              {% for s in santri_list %}
+              <option value="{{ s.id }}">{{ s.full_name }} ({{ s.nis }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Nilai Angka (0.0 - 100.0)</label>
+            <input type="number" step="0.1" name="score" value="85.0" min="0" max="100" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Catatan Evaluasi Guru</label>
+            <textarea name="teacher_note" rows="2" placeholder="Catatan kelemahan atau kelebihan santri..." class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700"></textarea>
+          </div>
+
+          <button type="submit" class="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-medium text-xs rounded transition shadow-xs">
+            Simpan Nilai & Publikasikan ke Rapor
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- PANEL 3: ABSENSI & CATATAN ADAB -->
+  <div x-show="panel === 'kesantrian'" class="space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Form Absensi Kegiatan -->
+      <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+        <h2 class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 mb-4">Pencatatan Kehadiran Kegiatan</h2>
+        <form action="/api/attendance" method="POST" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Santri</label>
+            <select name="santri_id" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              {% for s in santri_list %}
+              <option value="{{ s.id }}">{{ s.full_name }} ({{ s.nis }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal</label>
+              <input type="date" name="attendance_date" value="{{ today_date }}" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Jenis Kegiatan</label>
+              <select name="activity_type" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+                <option value="HALAQAH_TAHFIDZ">Halaqah Tahfidz</option>
+                <option value="KBM_DINIYAH">KBM Diniyah / Kelas</option>
+                <option value="SHOLAT_JAMAAH">Sholat Berjamaah</option>
+                <option value="ASRAMA_MALAM">Absensi Malam Asrama</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Status Kehadiran</label>
+            <select name="status" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              <option value="HADIR">Hadir</option>
+              <option value="SAKIT">Sakit</option>
+              <option value="IZIN">Izin</option>
+              <option value="ALFA">Alfa / Tanpa Keterangan</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Keterangan / Catatan Tambahan</label>
+            <input type="text" name="note" placeholder="Alasan izin atau sakit..." class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+          </div>
+
+          <button type="submit" class="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-medium text-xs rounded transition shadow-xs">
+            Simpan Absensi
+          </button>
+        </form>
+      </div>
+
+      <!-- Form Catatan Adab & Prestasi -->
+      <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+        <h2 class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 mb-4">Input Catatan Prestasi & Adab Santri</h2>
+        <form action="/api/santri-notes" method="POST" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Santri</label>
+            <select name="santri_id" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+              {% for s in santri_list %}
+              <option value="{{ s.id }}">{{ s.full_name }} ({{ s.nis }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal</label>
+              <input type="date" name="note_date" value="{{ today_date }}" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Kategori</label>
+              <select name="category" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700">
+                <option value="PRESTASI">Prestasi Akademik/Tahfidz</option>
+                <option value="PEMBINAAN_ADAB">Pembinaan Adab / Perilaku</option>
+                <option value="IZIN_KESEHATAN_PULANG">Izin Kesehatan / Pulang</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Judul Catatan</label>
+            <input type="text" name="title" placeholder="Misal: Juara MHQ Internal / Terlambat Berjamaah" required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Rincian Deskripsi</label>
+            <textarea name="description" rows="2" placeholder="Uraian detail pembinaan atau prestasi santri..." required class="w-full px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-700"></textarea>
+          </div>
+
+          <button type="submit" class="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-medium text-xs rounded transition shadow-xs">
+            Simpan Catatan Kesantrian
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

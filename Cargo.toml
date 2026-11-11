@@ -1,0 +1,44 @@
+[package]
+name = "sipesantren"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+# Web Framework & Async Runtime
+axum = { version = "0.7.9", features = ["multipart", "macros"] }
+axum-extra = { version = "0.9.6", features = ["cookie", "typed-header"] }
+tokio = { version = "1.41.1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "signal"] }
+tokio-stream = { version = "0.1.16", features = ["sync"] }
+tower = { version = "0.5.1", features = ["util"] }
+tower-http = { version = "0.6.2", features = ["fs", "compression-br", "compression-gzip", "trace", "limit"] }
+futures-util = "0.3.31"
+async-trait = "0.1.83"
+
+# Database (SQLite + Compile/Runtime Checked Queries)
+sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono"] }
+
+# Templating (Server-Side Rendering via HtmlTemplate<T> wrapper)
+askama = "0.12.1"
+
+# Serialization, Time & Identifiers
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
+chrono = { version = "0.4.38", features = ["serde"] }
+uuid = { version = "1.11.0", features = ["v7", "serde"] }
+
+# Security & Cryptography
+argon2 = "0.5.3"
+password-hash = { version = "0.5.0", features = ["std", "getrandom"] }
+rand_core = { version = "0.6.4", features = ["std"] }
+sha2 = "0.10.8"
+hex = "0.4.3"
+
+# HTTP Client (Untuk Adapter WhatsApp Gateway)
+reqwest = { version = "0.12.9", default-features = false, features = ["json", "rustls-tls"] }
+
+# Logging & Error Handling
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+thiserror = "2.0.3"
+anyhow = "1.0.93"
+dotenvy = "0.15.7"

@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes blurFadeEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+.animate-view-enter {
+  animation: blurFadeEnter 220ms var(--ease-out) both;
+}
+
+@keyframes staggeredEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-stagger-item {
+  animation: staggeredEntrance 240ms var(--ease-out) both;
+  animation-delay: calc(var(--index, 0) * 35ms);
+}
+
+.btn-interactive {
+  transition: transform 160ms var(--ease-out), opacity 160ms var(--ease-out), background-color 160ms var(--ease-out);
+}
+
+.btn-interactive:active {
+  transform: scale(0.97);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
