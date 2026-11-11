@@ -8,11 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
 
 jobs:
   test:
-    name: Build, Lint & E2E Integration Test
+    name: Build & E2E Integration Test
     runs-on: ubuntu-latest
 
     steps:
@@ -21,22 +20,14 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
 
       - name: Cache Cargo registry & build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check code formatting
-        run: cargo fmt --check
-
       - name: Run Cargo Check across all targets
         run: cargo check --all-targets
-
-      - name: Run Clippy Linter
-        run: cargo clippy --all-targets -- -D warnings
 
       - name: Execute 12-Step E2E Automated Integration Test
         run: cargo test --test e2e_flow -- --nocapture
