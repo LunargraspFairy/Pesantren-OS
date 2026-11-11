@@ -46,15 +46,13 @@ pub async fn handle_login(
         return Err(AppError::Unauthorized);
     }
 
-    let raw_token = create_user_session(&state.db, &user.id, state.config.session_ttl_hours).await?;
+    let raw_token =
+        create_user_session(&state.db, &user.id, state.config.session_ttl_hours).await?;
 
     let cookie = Cookie::build((SESSION_COOKIE_NAME, raw_token))
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
-        .max_age(axum_extra::extract::cookie::time::Duration::hours(
-            state.config.session_ttl_hours,
-        ))
         .build();
 
     let dest = match UserRole::from_db(&user.role) {
@@ -83,7 +81,6 @@ pub async fn handle_logout(
     let removal = Cookie::build((SESSION_COOKIE_NAME, ""))
         .path("/")
         .http_only(true)
-        .max_age(axum_extra::extract::cookie::time::Duration::ZERO)
         .build();
 
     Ok((jar.remove(removal), Redirect::to("/login")))
